@@ -1,0 +1,57 @@
+#!/usr/bin/perl
+
+use IO::Socket;
+# relaybox tester
+
+my $cmd = shift;
+
+
+
+
+my $mrbsocket = IO::Socket::INET->new(Proto =>'udp')
+  or die "Could get socket 127.0.0.1:10273 : $@\n";
+
+
+my $ret = &mrb_send($cmd);
+print $ret;
+
+
+
+
+sub mrb_send {
+  my $msg = shift;
+  my $rb_fail=3;        # retries
+  
+  # my $board=shift;
+  my $rbport=8234;
+  my $rbip = "192.168.1.181";
+  # print "mrb_send to $board\n";
+  unless ($mrbsocket) {
+    my $mrbsocket = IO::Socket::INET->new(Proto =>'udp')
+      or die "Could get socket 127.0.0.1:10273 : $@\n";
+    print "opening a udp socket\n";
+  }
+  while ($rb_fail) {
+    eval {
+      local $SIG{ALRM} = sub { die "alarm\n" };
+      alarm 3;
+     my $buf = "$msg\n";
+                    
+      my $hisiaddr = inet_aton($rbip);
+      my $hispaddr = sockaddr_in($rbport, $hisiaddr);
+      my $him  = send($mrbsocket, $buf, 0, $hispaddr)
+        or die "cannot send to localhost:10273 $!";
+      # and hopefully read something back
+      $hispaddr = recv($mrbsocket, $msg, 100, 0) or die "recv : $!";
+      alarm 0;
+};
+    if ($@) {
+      print "TIMEOUT\n";
+      $rb_fail--;
+   } else {
+      $rb_fail = 0;
+      return $msg;
+    }
+  }
+}
+
