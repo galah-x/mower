@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 use IO::Socket;
-# relaybox tester
+# relaybox tester   RB
 
 my $cmd = shift;
 
@@ -25,6 +25,10 @@ sub mrb_send {
   # my $board=shift;
   my $rbport=8234;
   my $rbip = "192.168.1.181";
+  # the starlink router doesn't seem to take the hostname from the device,
+  # nor does it support dns lookup from the dhcp-allocated namespace.
+  # so you get to use the starlink android app to find the IP address.  
+
   # print "mrb_send to $board\n";
   unless ($mrbsocket) {
     my $mrbsocket = IO::Socket::INET->new(Proto =>'udp')
