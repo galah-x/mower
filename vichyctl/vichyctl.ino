@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vichyctl add wifi+utp to vichy vc8145 multimeter  Time-stamp: "2025-02-15 19:31:48 john"';
+// my $ver =  'vichyctl add wifi+utp to vichy vc8145 multimeter  Time-stamp: "2025-02-15 19:53:03 john"';
 
 #define CONNECT_TO_NETWORK
 
@@ -10,11 +10,6 @@
 #include "credentials.h"   // password and ssid live here
 #endif
 
-// #include "io.h"    // io map
-// #include "esp_mac.h"
-#include "ESP32Time.h"
-
-
 const uint8_t record_size = 12;  //  char string , %02x \n
 uint8_t serial_buf[record_size];
 uint8_t serial_buf_pointer;
@@ -22,22 +17,17 @@ int serial_byte;
 bool serial_buf_aligned;
 const uint8_t serial_buf_poll_char = 0x89;
 
-char valuestring[8];
-char unitstring[4];
-char valuestring_o[8];
-char unitstring_o[4];
-bool  locked;
+char valuestring[8];   // construction string for adc value
+char unitstring[4];    // construction string for units
+char valuestring_o[8];  // semaphore protected value string
+char unitstring_o[4];   // semaphore protected units string
+bool  locked;           // a semaphore to ensure I don't udp read a string while its updating
 
 //The udp library class
 AsyncUDP udp;
 
-// ESP32Time rtc;
-// not bothering to set this, as only interested in timeout delays.
-// time is just measured from last reset.
-
 unsigned long millisecs;
 const unsigned long nextpoll = 200;  // milliseconds.
-// char msgbuf[150];
 
 // ############### SETUP ##########################
 
@@ -92,7 +82,7 @@ void setup()
 
 void loop()
 {
-  // issue a new poll when due
+  // issue a new poll when its due
   if (millis() > (millisecs + nextpoll))
     {
       //    Serial.println("poll");
@@ -159,8 +149,8 @@ void loop()
 //                                0x50 negative
 //  serial_buf[5:9] ascii reading characters
 
-// serial_buf[10]  maybe a checksum
-// serial_buf[11]  maybe a newline
+// serial_buf[10]  might be a checksum
+// serial_buf[11]  might be a newline
 
 
 int before_dp;
