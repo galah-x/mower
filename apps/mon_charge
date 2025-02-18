@@ -1,0 +1,122 @@
+#!/usr/bin/perl
+#    -*- Mode: cperl     -*-
+# emacs automagically updates the timestamp field on save
+# my $ver =  'mon_charge monitor mower charging  Time-stamp: "2025-02-15 19:53:03 john"';
+
+# Both the vichy meter and the relaybox need to be in range of starlink (or whatever wifi network is in use.)
+# the vichy needs to have RS232 on (long press of TIMER button)
+# Vichy should probably not be autoranging, if it is, then delay between relay change and sample
+# needs to be ~5s.
+
+use IO::Socket;
+# mower charge monitor
+use Time::HiRes qw(sleep);
+
+# monitor both individual batteries, and the total voltage at 1m intervals while charging.
+# log the results.
+
+
+my $socket = IO::Socket::INET->new(Proto =>'udp')
+  or die "Could get socket 127.0.0.1:10273 : $@\n";
+
+my $rbport=8234;
+my $rbip = "192.168.1.181";
+my $vport=8235;
+my $vip = "192.168.1.27";
+
+my $time;
+my $period = 60;
+@_ = localtime(time());
+my $logfile = sprintf("logfile.%04d%02d%02d%02d%02d", $_[5]+1900, $_[4]+1, $_[3], $_[2], $_[1]) ;
+print "logging to $logfile\n";
+my $fh;
+
+if (1) {
+  open($fh, ">$logfile") || die "could not open logfile $logfile";
+}
+my $string;
+my $volt;
+
+# handle interrupt more cleanly.
+$SIG{INT} = sub { close $fh; die "close logfile and exit\n";};
+$SIG{TERM} = sub { close $fh; die "close logfile and exit\n";};
+
+
+while (1) {
+    $time = time();
+    $string = sprintf "%s ",  scalar localtime($time);
+    print $string;
+    print $fh $string;
+    foreach my $ch ("B5", "B1", "B2", "B3", "B4") {
+      &set_rb_to($ch);
+      $volt = &read_volt(0.5);
+      print $volt, " ";
+      print $fh $volt, " ";
+    }
+    print "\n";
+    print $fh "\n";
+    sleep($period - (time() - $time));
+}
+
+sub read_volt {
+  my $delay = shift;
+  if ($delay > 0) { sleep($delay)}
+  my $string = udpsend_n_get("", $vport, $vip, $socket);
+  if ($string =~ /(\S+)\s\S+/) {
+    return $1;
+  } else {
+    return "???";
+  }
+}
+
+
+sub set_rb_to
+{
+  my $c = shift;
+  if ($c =~ /B/) {
+    udpsend_n_get("B0", $rbport, $rbip, $socket);
+    sleep(0.1);
+  }
+  udpsend_n_get($c, $rbport, $rbip, $socket);
+  sleep(5);
+}
+
+sub udpsend_n_get
+{
+  my $msg = shift;
+  my $udpport=shift;
+  my $ip = shift;
+  my $socket = shift;
+  
+  my $retries=3;        # retries
+  
+#  unless ($mrbsocket) {
+#    my $mrbsocket = IO::Socket::INET->new(Proto =>'udp')
+#      or die "Could get socket 127.0.0.1:10273 : $@\n";
+#    print "opening a udp socket\n";
+#  }
+  while ($retries) {
+    eval {
+      local $SIG{ALRM} = sub { die "alarm\n" };
+      alarm 3;
+      my $buf = "$msg\n";
+      
+      my $hisiaddr = inet_aton($ip);
+      my $hispaddr = sockaddr_in($udpport, $hisiaddr);
+      my $him  = send($socket, $buf, 0, $hispaddr)
+        or die "cannot send to localhost:10273 $!";
+      # and hopefully read something back
+      $hispaddr = recv($socket, $msg, 100, 0) or die "recv : $!";
+      alarm 0;
+    };
+    if ($@) {
+      #  print "TIMEOUT\n";
+      $retries--;
+      return -1;
+    } else {
+      $retries = 0;
+      return 0, $msg;
+    }
+  }
+}
+

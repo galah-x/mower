@@ -5,9 +5,6 @@ use IO::Socket;
 
 my $cmd = shift;
 
-
-
-
 my $mrbsocket = IO::Socket::INET->new(Proto =>'udp')
   or die "Could get socket 127.0.0.1:10273 : $@\n";
 
