@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "mower_footprints")(type "KiCad")(uri "/fs/john/projects/arduino/mower/vmon/vmon/mower_footprints.pretty")(options "")(descr ""))
+)

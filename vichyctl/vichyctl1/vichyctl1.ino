@@ -8,6 +8,7 @@
 #include "WiFi.h"
 #include "AsyncUDP.h"
 #include "credentials.h"   // password and ssid live here
+#include "port.h"    // udpport
 #endif
 
 const uint8_t record_size = 12;  //  char string , %02x \n
@@ -58,7 +59,7 @@ void setup()
     }
   }
 
-  if (udp.listen(8235)) {
+  if (udp.listen(udpport)) {
     Serial.print("UDP Listening on IP: ");
     Serial.println(WiFi.localIP());
     udp.onPacket([](AsyncUDPPacket packet) {

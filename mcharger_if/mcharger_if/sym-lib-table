@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "mower")(type "KiCad")(uri "/fs/john/projects/arduino/mower/vmon/vmon/mower.kicad_sym")(options "")(descr ""))
+)
