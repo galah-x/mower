@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmon_testapp  Time-stamp: "2025-03-05 10:53:09 john"';
+// my $ver =  'vmon_testapp  Time-stamp: "2025-03-06 08:32:07 john"';
 
 // this is a little app to test, calibrate and set NV memory on a vmon board.
 
@@ -25,7 +25,6 @@ const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 char serial_buf[record_size];
 uint8_t serial_buf_pointer;
 int serial_byte;
-bool serial_buf_aligned;
 
 
 // these will be initialized from the NV memory
