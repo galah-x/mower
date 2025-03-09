@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-09 17:24:19 john"';
+// my $ver =  'mcc  Time-stamp: "2025-03-09 19:39:18 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -55,16 +55,19 @@ char return_buf[msgbuflen]; // for responses
 /* IOs */
 
 
-const char * version = "MCC 9 Mar 2025 Reve";
+const char * version = "MCC 9 Mar 2025 Revf";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
 
 int     fan_on_temp;
 int     fan_off_temp;
+bool    logging;
 uint8_t psu_mac[6];
 uint8_t mco_mac[6];
 
+
+bool UI_owns_display;
 
 typedef struct struct_message {
   char message[msgbuflen];
@@ -135,9 +138,14 @@ Adafruit_BMP280 tsense;    // I2C
 RotaryEncoder *encoder = nullptr;
 int enc_pos;
 uint8_t enc_pushn_state;
-uint8_t enc_change = 0;
+int enc_change = 0;
 uint8_t enc_press = 0;
 int     enc_press_debounce = 50; //msecs
+bool    log_file_open=0;
+bool    show_menu;
+int     menu;
+int     menu_line;
+const uint8_t cursor = '>';
 
 //IRAM_ATTR void checkPosition()
 //{
@@ -242,6 +250,7 @@ void setup (void) {
     enc_press = 0;
     enc_change = 0;
     enc_pos = encoder->getPosition();
+    UI_owns_display = false;
 }
 
    
@@ -277,10 +286,10 @@ void loop (void) {
 	  digitalWrite(fan_en_pin, HIGH);
       millisecs_temp= millis();
     }
-
-
+  
+  
   encoder->tick(); // just call tick() to check the state.
-
+  
   int newPos = encoder->getPosition();
   
   if (enc_pos != newPos) {
@@ -294,19 +303,15 @@ void loop (void) {
 	enc_change = 1;
 	Serial.println("enc changed 1");
       }    
-    //  Serial.print("pos:");
-    //Serial.print(newPos);
-    //Serial.print(" dir:");
-    //Serial.println((int)(encoder->getDirection()));
     enc_pos = newPos;
   } else {
     enc_change = 0;
   }
-
+  
   int newenc_pushn_state = digitalRead(enc_pushn_pin);
   
   if (enc_pushn_state  != newenc_pushn_state )
-      delay(enc_press_debounce);
+    delay(enc_press_debounce);
   if ((enc_pushn_state == 1) && (newenc_pushn_state == 0))
     {
       Serial.println("enc pressed");
@@ -316,10 +321,140 @@ void loop (void) {
     enc_press = 0;
   enc_pushn_state = newenc_pushn_state;
   
+  if (enc_press && !UI_owns_display)
+    {
+      UI_owns_display = true;
+      menu=0;
+      menu_line=0;
+      show_menu=true;
+      enc_press = 0;
+    }
+  if (UI_owns_display)
+    {
+      Serial.print("menu ");
+      Serial.print(menu);
+      Serial.print(" line");
+      Serial.println(menu_line);
+      do_menu();
+    }
 }
 
+void do_menu (void )
+{
+  if (menu == 0)
+    do_menu_0();
+  else if (menu == 1)
+    do_menu_1();
+}
 
-
+void do_menu_0 (void)
+{
+  if (show_menu)
+    {
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print(" go back");
+      lcd.setCursor(0,1);
+      lcd.print(" log menu");
+      lcd.setCursor(0,menu_line);
+      lcd.write(cursor);
+      show_menu=false;
+    }
+  if (enc_press == true)
+    {
+      if (menu_line == 0)
+	{
+	  lcd.clear();
+	  UI_owns_display=false;
+	}
+      if (menu_line == 1)
+	{
+	  menu=1;
+	  menu_line = 0;
+	  show_menu=1;
+	}
+    }
+  if (enc_change == 1)
+    if (menu_line <= 2)
+      {
+	lcd.setCursor(0,menu_line);
+	lcd.print(' ');
+	menu_line++;
+	lcd.setCursor(0,menu_line);
+	lcd.write(cursor);
+      }
+  if (enc_change == -1)
+    if (menu_line >= 1)
+      {
+	lcd.setCursor(0,menu_line);
+	lcd.print(' ');
+	menu_line--;
+	lcd.setCursor(0,menu_line);
+	lcd.write(cursor);
+      }
+}
+void do_menu_1 (void)  // log menu
+{
+  if (show_menu)
+    {
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print(" go back");
+      lcd.setCursor(0,1);
+      if (logging==1)
+	lcd.print(" turn off logging");
+      else 
+	lcd.print(" turn on logging");
+      lcd.setCursor(0,menu_line);
+      lcd.write(cursor);
+      show_menu=false;
+    }
+  if (enc_press == true)
+    {
+      if (menu_line == 0)
+	{
+	  menu = 0;
+	  menu_line = 0;
+	  show_menu=1;
+	}
+      if (menu_line == 1)
+	{
+	  if (logging==1)
+	    {
+	      // turn off logging
+	      logging=0;
+	      show_menu=1;
+	      close_logfile();
+	    }
+	  else
+	    {
+	      // turn on logging
+	      logging=1;
+	      show_menu=1;
+	      open_logfile();
+	    }
+	}
+    }
+  if (enc_change == 1)
+    if (menu_line <= 2)
+      {
+	lcd.setCursor(0,menu_line);
+	lcd.print(' ');
+	menu_line++;
+	lcd.setCursor(0,menu_line);
+	lcd.write(cursor);
+      }
+  if (enc_change == -1)
+    if (menu_line >= 1)
+      {
+	lcd.setCursor(0,menu_line);
+	lcd.print(' ');
+	menu_line--;
+	lcd.setCursor(0,menu_line);
+	lcd.write(cursor);
+      }
+}
+  
 const uint8_t default_mac[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 
 void reinit_NVM (void)
@@ -334,15 +469,16 @@ void reinit_NVM (void)
   //  first-time run we will create
   //  our keys and store the initial "factory default" values.
 
-  mccPrefs.putInt("fan_on_temp",  45);        // start fan at this temp if auto_fan
-  mccPrefs.putInt("fan_off_temp", 35);       // stop fan at this temp if auto_fan
-  mccPrefs.putBytes("psu_mac", default_mac, 6);  // mac address of power supply 
-  mccPrefs.putBytes("psu_mac", default_mac, 6);  // mac address of power supply 
+  mccPrefs.putBool("log", true);                // default is to log
+  mccPrefs.putInt("fan_on_temp",  45);          // start fan at this temp if auto_fan
+  mccPrefs.putInt("fan_off_temp", 35);          // stop fan at this temp if auto_fan
+  mccPrefs.putBytes("psu_mac", default_mac, 6); // mac address of power supply 
+  mccPrefs.putBytes("psu_mac", default_mac, 6); // mac address of power supply 
 
   mccPrefs.putBool("nvsInit", true);            // Create the "already initialized"
   //  key and store a value.
   // The "factory defaults" are created and stored so...
-  mccPrefs.end();                              // Close the namespace in RW mode and...
+  mccPrefs.end();                               // Close the namespace in RW mode and...
 }
 
 
@@ -356,6 +492,7 @@ void load_operational_params(void)
 
    fan_on_temp = mccPrefs.getInt("fan_on_temp");
    fan_off_temp = mccPrefs.getInt("fan_off_temp");
+   logging = mccPrefs.getBool("log"); 
    mccPrefs.getBytes("psu_mac", psu_mac, 6);           // load power supply mac
    mccPrefs.getBytes("mco_mac", mco_mac, 6);           // load mco/cmt supply mac
 
@@ -372,6 +509,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   //                         E power state enabled
   //                         H=templimit_fanon in integer degrees
   //                         L=fan temp off again low
+  //                         l=log state
   //                         M print mac addresses
   //                         T=temperature
   //                         V=version
@@ -381,6 +519,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   //                         E enable  WE=1         turn on/off mower charge power
   //                         H=fan on  WH=45        fan on temperature in decomal degrees
   //                         L=fan off WL=23        fan off temperature in decomal degrees
+  //                         l                      set log state
   //                         D=display WD0=string   write display line 0..3 with given string
   //                         Mx mac    WMP=<12 ascii hex digits>  mac for Psu or Mco
   //                        
@@ -417,6 +556,10 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
       case 'L':
 	snprintf(out_buf, out_buf_len, "Fan_off_at=%d degrees\n", fan_off_temp);
 	break;
+
+      case 'l':
+	snprintf(out_buf, out_buf_len, "log=%d\n", logging);
+	break;
 	
       case 'M':
 	snprintf(out_buf, out_buf_len, "MCC_MAC=%02x%02x%02x%02x%02x%02x PSU=%02x%02x%02x%02x%02x%02x MCO=%02x%02x%02x%02x%02x%02x\n",
@@ -443,21 +586,25 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 
     switch (field) {
       // FIXME add v, i
+
     case 'D':
-      // sscanf(in_buf, "%1c%10s", &cmd, &out_buf);  // whatever followed the 'm'
-      // nope, cannot make sscanf work for a char then a 0 terminated string. ????
-      field2 = (in_buf[2] - (uint8_t) 1) & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
-      //   jump over WD0=12340            
-      for (read_pointer=4; read_pointer < 24; read_pointer++)
+      if (! UI_owns_display)
 	{
-	  out_buf[read_pointer-4] = in_buf[read_pointer];
-	  if (in_buf[read_pointer] == 0)
-	    { out_buf[read_pointer-4]= ' ';
-	      break;
+	  // sscanf(in_buf, "%1c%10s", &cmd, &out_buf);  // whatever followed the 'm'
+	  // nope, cannot make sscanf work for a char then a 0 terminated string. ????
+	  field2 = (in_buf[2] - (uint8_t) 1) & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
+	  //   jump over WD0=12340            
+	  for (read_pointer=4; read_pointer < 24; read_pointer++)
+	    {
+	      out_buf[read_pointer-4] = in_buf[read_pointer];
+	      if (in_buf[read_pointer] == 0)
+		{ out_buf[read_pointer-4]= ' ';
+		  break;
+		}
 	    }
+	  lcd.setCursor(0,field2);
+	  lcd.print(out_buf);
 	}
-      lcd.setCursor(0,field2);
-      lcd.print(out_buf);
       out_buf[0]=0;
       break;
       
@@ -475,6 +622,13 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
     case 'L':
       mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
       mccPrefs.putInt("fan_off_temp", value);               
+      mccPrefs.end();                              // Close the namespace
+      load_operational_params();
+      break;
+      
+    case 'l':
+      mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
+      mccPrefs.putBool("log", value);               
       mccPrefs.end();                              // Close the namespace
       load_operational_params();
       break;
@@ -498,3 +652,9 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 }
 
 
+void open_logfile (void)
+{
+}
+void close_logfile (void)
+{
+}
