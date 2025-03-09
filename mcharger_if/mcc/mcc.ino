@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-09 13:49:24 john"';
+// my $ver =  'mcc  Time-stamp: "2025-03-09 15:09:40 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -30,6 +30,8 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <hd44780.h>   // lcd library
+#include <hd44780ioClass/hd44780_I2Cexp.h> // include i/o class header
 
 #define DEBUG
 
@@ -39,7 +41,7 @@
 
 
 // serial is used for debug and for programming NVM
-const uint8_t longest_record = 20;  //  char char = nnnnn 0, worst is write MAC
+const uint8_t longest_record = 24;  //  char char = nnnnn 0, worst is WD1=12345678901234567890
 const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 char serial_buf[record_size];
 uint8_t serial_buf_pointer;
@@ -52,7 +54,7 @@ char return_buf[msgbuflen]; // for responses
 /* IOs */
 
 
-const char * version = "MCC test app 9 Mar 2025 Revb";
+const char * version = "MCC 9 Mar 2025 Revd";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -133,6 +135,9 @@ const unsigned long next_temp_delay = 1000;  // milliseconds.
 
 int hs_temperature;
 
+// lcd object
+hd44780_I2Cexp lcd;
+
 void setup (void) {
   Serial.begin(115200);
   Serial.println(version);
@@ -209,6 +214,10 @@ void setup (void) {
       return;
     }
     Serial.println("done setup");
+
+    lcd.begin(20,4);
+    lcd.setCursor(0,0);
+    lcd.print(version);
 }
 
    
@@ -319,6 +328,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   int      value;
   uint8_t  mvalue[6]; // mac address
   uint8_t  msg[21];   // 20 chars and 0 terminator
+  int match ;
   cmd = in_buf[read_pointer++];
   out_buf[0]=0;
   
@@ -366,10 +376,28 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 
   case 'W':
     // first case, WA=3     decimal integer up to ~5 sig figures
-    int match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
-    
+    match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
+
     switch (field) {
-      // FIXME add v, i, D
+      // FIXME add v, i
+    case 'D':
+      // sscanf(in_buf, "%1c%10s", &cmd, &out_buf);  // whatever followed the 'm'
+      // nope, cannot make sscanf work for a char then a 0 terminated string. ????
+      field2 = (in_buf[2] - (uint8_t) 1) & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
+      //   jump over WD0=12340            
+      for (read_pointer=4; read_pointer < 24; read_pointer++)
+	{
+	  out_buf[read_pointer-4] = in_buf[read_pointer];
+	  if (in_buf[read_pointer] == 0)
+	    { out_buf[read_pointer-4]= ' ';
+	      break;
+	    }
+	}
+      lcd.setCursor(0,field2);
+      lcd.print(out_buf);
+      out_buf[0]=0;
+      break;
+      
     case 'E':
       digitalWrite(power48V_en_pin, value);
       break;
