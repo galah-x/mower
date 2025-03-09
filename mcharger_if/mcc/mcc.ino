@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-09 12:39:36 john"';
+// my $ver =  'mcc  Time-stamp: "2025-03-09 13:49:24 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -19,7 +19,7 @@
 // test cmt MAC is 5c013b6c9938
 // test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
 // test psu MAC is       wifi to serial adapter for the power supply. Originally a vichy mm adaptor
-// test mcc MAC (ME) is    MowerChargeController
+// test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController
 
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
@@ -46,16 +46,25 @@ uint8_t serial_buf_pointer;
 int serial_byte;
 
 uint8_t baseMac[6];
-
-char return_buf[128]; // for responses
+const  uint16_t msgbuflen= 128;
+char return_buf[msgbuflen]; // for responses
 
 /* IOs */
 
 
-const char * version = "MCC test app 9 Mar 2025 Reva";
+const char * version = "MCC test app 9 Mar 2025 Revb";
+
+Preferences mccPrefs;  // NVM structure
+// these will be initialized from the NV memory
+
+int     fan_on_temp;
+int     fan_off_temp;
+uint8_t psu_mac[6];
+uint8_t mco_mac[6];
+
 
 typedef struct struct_message {
-  char message[128];
+  char message[msgbuflen];
 } struct_message;
 
 // create the message struct
@@ -82,15 +91,15 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
      fields 12 to 17 seem to be the source MAC. rest isn't obvious */
 
-  parse_buf(query_data.message, return_buf, msgbuflen);
+  parse_buf(response_data.message, return_buf, msgbuflen);
   Serial.print("parsed responded: ");
   Serial.printf("%s", return_buf);
   Serial.print(response_data.message);
   //** return return_buf to requestor here **
 
-  strncpy(response_data.message, return_buf, 128);
+  strncpy(response_data.message, return_buf, msgbuflen);
   // Send message via ESP-NOW
-  esp_err_t result = esp_now_send(cmac, (uint8_t *) &response_data, sizeof(response_data));
+  esp_err_t result = esp_now_send(mco_mac, (uint8_t *) &response_data, sizeof(response_data));
   
   if (result == ESP_OK) {
     // Serial.println("Sent with success");
@@ -118,14 +127,6 @@ const uint8_t display_addr = 0x27;
 
 Adafruit_BMP280 tsense;    // I2C
 
-Preferences mccPrefs;  // NVM structure
-
-// these will be initialized from the NV memory
-
-int     fan_on_temp
-int     fan_off_temp
-uint8_t psu_mac[6];
-uint8_t mco_mac[6];
 
 unsigned long millisecs_temp;
 const unsigned long next_temp_delay = 1000;  // milliseconds.
@@ -136,11 +137,11 @@ void setup (void) {
   Serial.begin(115200);
   Serial.println(version);
   // initialize NVM  
-   mccPrefs.begin("BfcPrefs", RO_MODE);         // Open our namespace (or create it
+   mccPrefs.begin("mccPrefs", RO_MODE);         // Open our namespace (or create it
                                                 //  if it doesn't exist) in RO mode.
-   bool tpInit = bfcPrefs.isKey("nvsInit");     // Test for the existence
+   bool tpInit = mccPrefs.isKey("nvsInit");     // Test for the existence
                                                 // of the "already initialized" key.
-   bfcPrefs.end();                              // close the namespace in RO mode
+   mccPrefs.end();                              // close the namespace in RO mode
    if (tpInit == false) {
      reinit_NVM();
    }
@@ -173,8 +174,7 @@ void setup (void) {
    WiFi.mode(WIFI_STA);
 
    esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
-   Serial.printf("ESP32 Board %d MAC Address: %02x%02x%02x%02x%02x%02x\n",
-		 board_address,
+   Serial.printf("ESP32 MAC Address: %02x%02x%02x%02x%02x%02x\n",
 		 baseMac[0],baseMac[1],baseMac[2],baseMac[3],baseMac[4],baseMac[5]);
 
    Serial.println("init espnow");
@@ -256,9 +256,9 @@ void reinit_NVM (void)
   
   // If tpInit is 'false', the key "nvsInit" does not yet exist therefore this
   //  must be our first-time run. We need to set up our Preferences namespace keys. So...
-  bfcPrefs.begin("mccPrefs", RW_MODE);       //  open it in RW mode.
+  mccPrefs.begin("mccPrefs", RW_MODE);       //  open it in RW mode.
   
-  // The .begin() method created the "BFCPrefs" namespace and since this is our
+  // The .begin() method created the "mccPrefs" namespace and since this is our
   //  first-time run we will create
   //  our keys and store the initial "factory default" values.
 
@@ -346,10 +346,10 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	break;
 	
       case 'M':
-	snprintf(out_buf, out_buf_len, "MCC MAC:%02x%02x%02x%02x%02x%02x PSU=%02x%02x%02x%02x%02x%02xMCO=%02x%02x%02x%02x%02x%02x\n",
+	snprintf(out_buf, out_buf_len, "MCC_MAC=%02x%02x%02x%02x%02x%02x PSU=%02x%02x%02x%02x%02x%02x MCO=%02x%02x%02x%02x%02x%02x\n",
 		 baseMac[0],baseMac[1],baseMac[2],baseMac[3],baseMac[4],baseMac[5],
 		 psu_mac[0],psu_mac[1],psu_mac[2],psu_mac[3],psu_mac[4],psu_mac[5],
-		 mco_mac[0],mco_mac[1],mco_mac[2],mco_mac[3],mco_mac[4],mco_mac[5],
+		 mco_mac[0],mco_mac[1],mco_mac[2],mco_mac[3],mco_mac[4],mco_mac[5]
 		 );
 	break;
 
@@ -376,14 +376,14 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 
     case 'H':
       mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
-      mccPrefs.putInt("temp_limit_on", value);               
+      mccPrefs.putInt("fan_on_temp", value);               
       mccPrefs.end();                              // Close the namespace
       load_operational_params();
       break;
       
     case 'L':
       mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
-      mccPrefs.putInt("temp_limit_off", value);               
+      mccPrefs.putInt("fan_off_temp", value);               
       mccPrefs.end();                              // Close the namespace
       load_operational_params();
       break;
