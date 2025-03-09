@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-09 15:09:40 john"';
+// my $ver =  'mcc  Time-stamp: "2025-03-09 17:24:19 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -32,6 +32,7 @@
 #include <esp_wifi.h>
 #include <hd44780.h>   // lcd library
 #include <hd44780ioClass/hd44780_I2Cexp.h> // include i/o class header
+#include <RotaryEncoder.h>
 
 #define DEBUG
 
@@ -54,7 +55,7 @@ char return_buf[msgbuflen]; // for responses
 /* IOs */
 
 
-const char * version = "MCC 9 Mar 2025 Revd";
+const char * version = "MCC 9 Mar 2025 Reve";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -112,9 +113,9 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
 }
 
 /* IOs */
-const uint8_t enc_an_in_pin  = 34;    // rotary encoder a
-const uint8_t enc_bn_in_pin  = 35;    // rotary encoder b
-const uint8_t enc_push_n_pin = 33;    // rotary encoder pushbutton
+const uint8_t enc_an_pin  = 34;    // rotary encoder a
+const uint8_t enc_bn_pin  = 35;    // rotary encoder b
+const uint8_t enc_pushn_pin = 33;    // rotary encoder pushbutton
 const uint8_t spi_sclk_pin = 14;
 const uint8_t spi_cs_pin   = 15;  // sdcard
 const uint8_t spi_mosi_pin = 13;
@@ -128,6 +129,21 @@ const uint8_t hs_temperature_addr = 0x76;
 const uint8_t display_addr = 0x27;
 
 Adafruit_BMP280 tsense;    // I2C
+
+// A pointer to the dynamic created rotary encoder instance.
+// This will be done in setup()
+RotaryEncoder *encoder = nullptr;
+int enc_pos;
+uint8_t enc_pushn_state;
+uint8_t enc_change = 0;
+uint8_t enc_press = 0;
+int     enc_press_debounce = 50; //msecs
+
+//IRAM_ATTR void checkPosition()
+//{
+//  encoder->tick(); // just call tick() to check the state.
+//}
+
 
 
 unsigned long millisecs_temp;
@@ -169,9 +185,9 @@ void setup (void) {
 
    pinMode(power48V_en_pin, OUTPUT);
    pinMode(fan_en_pin, OUTPUT);
-   pinMode(enc_an_in_pin, INPUT);
-   pinMode(enc_bn_in_pin, INPUT);
-   pinMode(enc_push_n_pin, INPUT);
+   pinMode(enc_an_pin, INPUT);
+   pinMode(enc_bn_pin, INPUT);
+   pinMode(enc_pushn_pin, INPUT);
 
    digitalWrite(fan_en_pin,  LOW);
    digitalWrite(power48V_en_pin, LOW);
@@ -218,6 +234,14 @@ void setup (void) {
     lcd.begin(20,4);
     lcd.setCursor(0,0);
     lcd.print(version);
+
+    encoder = new RotaryEncoder(enc_an_pin, enc_bn_pin, RotaryEncoder::LatchMode::FOUR3);
+    // register interrupt routine... hmmm, do I really need ints? Happy to just do this in loop().
+    // attachInterrupt(digitalPinToInterrupt(enc_an_pin), checkPosition, CHANGE);
+    //attachInterrupt(digitalPinToInterrupt(enc_bn_pin), checkPosition, CHANGE);
+    enc_press = 0;
+    enc_change = 0;
+    enc_pos = encoder->getPosition();
 }
 
    
@@ -253,6 +277,45 @@ void loop (void) {
 	  digitalWrite(fan_en_pin, HIGH);
       millisecs_temp= millis();
     }
+
+
+  encoder->tick(); // just call tick() to check the state.
+
+  int newPos = encoder->getPosition();
+  
+  if (enc_pos != newPos) {
+    if  ( (int) encoder->getDirection() < 0)
+      {
+	enc_change = -1;
+	Serial.println("enc changed -1");
+      }
+    else
+      {
+	enc_change = 1;
+	Serial.println("enc changed 1");
+      }    
+    //  Serial.print("pos:");
+    //Serial.print(newPos);
+    //Serial.print(" dir:");
+    //Serial.println((int)(encoder->getDirection()));
+    enc_pos = newPos;
+  } else {
+    enc_change = 0;
+  }
+
+  int newenc_pushn_state = digitalRead(enc_pushn_pin);
+  
+  if (enc_pushn_state  != newenc_pushn_state )
+      delay(enc_press_debounce);
+  if ((enc_pushn_state == 1) && (newenc_pushn_state == 0))
+    {
+      Serial.println("enc pressed");
+      enc_press  = 1;
+    }
+  else
+    enc_press = 0;
+  enc_pushn_state = newenc_pushn_state;
+  
 }
 
 
