@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-10 20:06:48 john"';
+// my $ver =  'mcc  Time-stamp: "2025-03-10 20:55:53 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -14,7 +14,12 @@
    It gets instructed by the MCO in the mower as to what to do.
    The model where I can control it either serially from the esp32 debug terminal, or using
    the same commands across esp_now from the MCO seems to work ok for test + development. */
-
+// NB, logging now writes in 4K chunks to minimize RmodifyW delays as part of locating logging
+//     crazy 10s delays. Which were predominately a broken ESP32Time when Time wasn't set to > year 1980.   
+//     Should help CDcard wear levelling no end also. Downside is you need to use the UI to turn
+//     off logging (which flushes then closes the file) prior to power down if you want
+//     the last ~~10 minutes of logs.
+//     The 4k write seems to take 40ms. hopefully thats not generally noticeable.
 
 // test cmt MAC is 5c013b6c9938
 // test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
@@ -25,7 +30,7 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
-#include "ESP32Time.h"
+#include "ESP32Time.h"   // must be V2.x or newer. V1.04 takes 5s to return a time string. breaks logging 
 #include <stdio.h>
 #include <esp_now.h>
 #include <WiFi.h>
@@ -62,7 +67,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 9 Mar 2025 Revj";
+const char * version = "MCC 9 Mar 2025 Revk";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -829,11 +834,11 @@ void appendtoFile(char *message) {
       memcpy(buf, msg, msize);
       sdbuf_ptr+= msize;
     }
-  else if (buf_remaining = msize)
+  else if (buf_remaining == msize)
     {
       memcpy(buf + sdbuf_ptr, msg, msize);
       sdbuf_ptr= 0;
-      file.write(buf, sdblksize);
+      file.write(buf, sdblksize);   // write seems to take about 40ms.
       which_sdbuf++;
       if (which_sdbuf == 2)
 	which_sdbuf = 0;
