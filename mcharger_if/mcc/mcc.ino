@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-09 19:39:18 john"';
+// my $ver =  'mcc  Time-stamp: "2025-03-10 20:06:48 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -33,6 +33,11 @@
 #include <hd44780.h>   // lcd library
 #include <hd44780ioClass/hd44780_I2Cexp.h> // include i/o class header
 #include <RotaryEncoder.h>
+ #include "FS.h"            // filesystem for sd logging
+ #include "SD.h"            // SD apparently uses ram more effectively than SDFat
+ #include "SPI.h"           // SPI access to sd card
+//#include "SdFat.h"             // Include library for SD card. required for cow list.
+// SdFile file;                   // Create SdFile object used for accessing files on SD card
 
 #define DEBUG
 
@@ -42,20 +47,22 @@
 
 
 // serial is used for debug and for programming NVM
-const uint8_t longest_record = 24;  //  char char = nnnnn 0, worst is WD1=12345678901234567890
+const uint8_t longest_record = 24;  //   worst is display comand WD1=12345678901234567890
 const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 char serial_buf[record_size];
 uint8_t serial_buf_pointer;
-int serial_byte;
 
-uint8_t baseMac[6];
+const uint16_t sdblksize = 4096; // blksize is always 512, cluster size usually 4k. 
+uint8_t sdbuf0[sdblksize];
+uint8_t sdbuf1[sdblksize];
+uint8_t which_sdbuf;
+uint16_t sdbuf_ptr;
+
+uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;
 char return_buf[msgbuflen]; // for responses
 
-/* IOs */
-
-
-const char * version = "MCC 9 Mar 2025 Revf";
+const char * version = "MCC 9 Mar 2025 Revj";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -73,12 +80,12 @@ typedef struct struct_message {
   char message[msgbuflen];
 } struct_message;
 
-// create the message struct
+// create the wifi message struct
 struct_message message_data;
 
 esp_now_peer_info_t peerInfo;
 
-// callback when data is sent
+// wifi callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
   //  Serial.print("\nLast Packet Send Status:\t");
@@ -115,7 +122,7 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   }
 }
 
-/* IOs */
+/* IOs  definitions */
 const uint8_t enc_an_pin  = 34;    // rotary encoder a
 const uint8_t enc_bn_pin  = 35;    // rotary encoder b
 const uint8_t enc_pushn_pin = 33;    // rotary encoder pushbutton
@@ -128,17 +135,18 @@ const uint8_t fan_en_pin = 27;    // turn on fan
 const uint8_t sda_pin   = 21;    // fan3
 const uint8_t scl_pin   = 22;    // fan3
 
+// I2C addresses 
 const uint8_t hs_temperature_addr = 0x76;
 const uint8_t display_addr = 0x27;
 
-Adafruit_BMP280 tsense;    // I2C
+Adafruit_BMP280 tsense;    // I2C connected bmp280 temperature and pressure sensor. Just used for temps.
 
 // A pointer to the dynamic created rotary encoder instance.
 // This will be done in setup()
 RotaryEncoder *encoder = nullptr;
-int enc_pos;
+int     enc_pos;
 uint8_t enc_pushn_state;
-int enc_change = 0;
+int     enc_change = 0;
 uint8_t enc_press = 0;
 int     enc_press_debounce = 50; //msecs
 bool    log_file_open=0;
@@ -146,36 +154,46 @@ bool    show_menu;
 int     menu;
 int     menu_line;
 const uint8_t cursor = '>';
+int     hs_temperature;
+const char * logfile = "/log.txt";
 
+File file;
+
+// this is the encoder ISR. Not certain I actually want to use encoder interrupts.
 //IRAM_ATTR void checkPosition()
 //{
 //  encoder->tick(); // just call tick() to check the state.
 //}
 
+// Going to do all my basic event timing and logging in seconds, so will use ESP32Time for convenience.
+// not going to bother setting the clock, just demark time in HMS from whenever the board last got
+// turned on.
+ESP32Time rtc;
+unsigned long last_temp_update_time;         // time last temperature was polled at, in seconds
+const unsigned long temp_update_period = 10; // seconds.
 
+unsigned long last_psu_update_time;         // time last power supply voltage and current was polled at
+const unsigned long psu_update_period = 2;  // seconds.
 
-unsigned long millisecs_temp;
-const unsigned long next_temp_delay = 1000;  // milliseconds.
+unsigned long last_log_update_time;         // time logfile was last flushed, in seconds
+const unsigned long log_update_period = 60; // seconds.
 
-int hs_temperature;
-
-// lcd object
+// create lcd object
 hd44780_I2Cexp lcd;
 
 void setup (void) {
   Serial.begin(115200);
   Serial.println(version);
+
   // initialize NVM  
-   mccPrefs.begin("mccPrefs", RO_MODE);         // Open our namespace (or create it
-                                                //  if it doesn't exist) in RO mode.
-   bool tpInit = mccPrefs.isKey("nvsInit");     // Test for the existence
-                                                // of the "already initialized" key.
-   mccPrefs.end();                              // close the namespace in RO mode
-   if (tpInit == false) {
-     reinit_NVM();
-   }
+   mccPrefs.begin("mccPrefs", RO_MODE);     // Open our namespace (or create it if it doesn't exist)
+   bool tpInit = mccPrefs.isKey("nvsInit"); // Test for the existence of the "already initialized" key.
+   mccPrefs.end();                          // close the namespace in RO mode
+   if (tpInit == false) 
+     reinit_NVM();                          // reinitialize the nvm structure if magik key was missing 
+   
    // load local variables from NVM
-   load_operational_params();                     // load all systemwide constants from NVM
+   load_operational_params();                // load all variables from NVM
 
    // start temperature sensor
    if (!tsense.begin(hs_temperature_addr))
@@ -187,9 +205,9 @@ void setup (void) {
    Serial.print("Temp=");
    Serial.println(hs_temperature);
 
-   // Carry on with the rest of your setup code...
+   // init some general variables and IOs 
    serial_buf_pointer = 0;
-   millisecs_temp = millis();
+   last_temp_update_time = rtc.getEpoch();
 
    pinMode(power48V_en_pin, OUTPUT);
    pinMode(fan_en_pin, OUTPUT);
@@ -200,6 +218,7 @@ void setup (void) {
    digitalWrite(fan_en_pin,  LOW);
    digitalWrite(power48V_en_pin, LOW);
 
+   // init esp_now wifi 
    WiFi.mode(WIFI_STA);
 
    esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
@@ -237,57 +256,111 @@ void setup (void) {
       Serial.println("Failed to add peer");
       return;
     }
-    Serial.println("done setup");
 
+    // initialize the display
     lcd.begin(20,4);
     lcd.setCursor(0,0);
     lcd.print(version);
 
+    // initialize the rotary encoder
     encoder = new RotaryEncoder(enc_an_pin, enc_bn_pin, RotaryEncoder::LatchMode::FOUR3);
-    // register interrupt routine... hmmm, do I really need ints? Happy to just do this in loop().
+    /* register interrupt routine... hmmm, do I _really_ need interrupts?
+     * Interrupts can have tricky side effects if not done properly. I don't know properly. 
+     * Happy to just poll this in loop() until it becomes obvious that I miss too many transitions.
+     * The way the sample code uses both ints AND loop() polling makes me suspect the relevant 
+     * library author(s) might not know interrupts properly either. */
     // attachInterrupt(digitalPinToInterrupt(enc_an_pin), checkPosition, CHANGE);
-    //attachInterrupt(digitalPinToInterrupt(enc_bn_pin), checkPosition, CHANGE);
+    // attachInterrupt(digitalPinToInterrupt(enc_bn_pin), checkPosition, CHANGE); 
+
     enc_press = 0;
     enc_change = 0;
     enc_pos = encoder->getPosition();
     UI_owns_display = false;
+
+    // sdcard
+    SPI.begin(spi_sclk_pin, spi_miso_pin, spi_mosi_pin, spi_cs_pin);
+    if (!SD.begin(spi_cs_pin)) {
+       Serial.println("Card Mount Failed");
+    }
+    uint8_t cardType = SD.cardType();
+
+    if (cardType == CARD_NONE) {
+      Serial.println("No SD card attached");
+    }
+    Serial.print("SD Card Type: ");
+    if (cardType == CARD_MMC) {
+      Serial.println("MMC");
+    } else if (cardType == CARD_SD) {
+      Serial.println("SDSC");
+    } else if (cardType == CARD_SDHC) {
+      Serial.println("SDHC");
+    } else {
+      Serial.println("UNKNOWN");
+    }
+
+    uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+    Serial.printf("SD Card Size: %lluMB\n", cardSize);
+    
+    listDir(SD, "/", 0);
+    Serial.println("done setup");
+    sdbuf_ptr=0;
+    which_sdbuf = 0;
+    
+    if (logging)
+      open_logfile();
 }
 
    
 
-void loop (void) {
+void loop (void)
+{
+  char     logmsg[30]; // for building logging messages
+  unsigned long t1;
   // service serial character if available.
-  if (Serial.available())
-    {
-      serial_byte = Serial.read();
-      if ((serial_byte != '\n') && (serial_buf_pointer < longest_record))
-	{
-	  serial_buf[serial_buf_pointer] = serial_byte;  // write char to buffer if space is available
-	  serial_buf_pointer++;
-	}    
-      if (serial_byte == '\n') {
-	serial_buf[serial_buf_pointer] = (uint8_t) 0;  // write string terminator to buffer
-	if (serial_buf_pointer >= 1) {  // at least a command letter
-	  parse_buf(serial_buf, return_buf, 127);           // parse the buffer if at least one char in it.
-	  Serial.print(return_buf);
-	}
-	serial_buf_pointer = 0;
-      }
-    }
+  do_serial_if_ready();
 
-  // update each temperature 
-  if (millis() > (millisecs_temp + next_temp_delay))
+  // service encoder and process the UI if required
+  do_encoder_and_UI();
+  
+  // update temperature and fan state if its due 
+  if (rtc.getEpoch() > (last_temp_update_time + temp_update_period))
     {
       hs_temperature=(int) tsense.readTemperature();
+      snprintf(logmsg, 30, "Temp=%d", hs_temperature);
+      
+      t1 = millis();
+      logger(logmsg);
+      Serial.print("temp log took ");
+      Serial.print(millis() - t1);
+      Serial.print(" which_sdbuf=");
+      Serial.print(which_sdbuf);
+      Serial.print(" sdbuf_ptr=");
+      Serial.println(sdbuf_ptr);
+      
       if (hs_temperature > fan_on_temp)
-	digitalWrite(fan_en_pin, HIGH);
+	{
+	  if (digitalRead(fan_en_pin) == 0)
+	    {
+	      logger("Turning fan on");
+	    }
+	  digitalWrite(fan_en_pin, HIGH);
+	}
       else
 	if (hs_temperature < fan_off_temp)
-	  digitalWrite(fan_en_pin, HIGH);
-      millisecs_temp= millis();
+	  {
+	    if (digitalRead(fan_en_pin) != 0)
+	      logger("Turning fan off");
+	    digitalWrite(fan_en_pin, LOW);
+	  }
+      last_temp_update_time = rtc.getEpoch();
     }
-  
-  
+}
+
+
+
+void do_encoder_and_UI (void)
+{
+  // look for encoder tick
   encoder->tick(); // just call tick() to check the state.
   
   int newPos = encoder->getPosition();
@@ -296,12 +369,12 @@ void loop (void) {
     if  ( (int) encoder->getDirection() < 0)
       {
 	enc_change = -1;
-	Serial.println("enc changed -1");
+	//	Serial.println("enc changed -1");
       }
     else
       {
 	enc_change = 1;
-	Serial.println("enc changed 1");
+	// Serial.println("enc changed 1");
       }    
     enc_pos = newPos;
   } else {
@@ -314,7 +387,7 @@ void loop (void) {
     delay(enc_press_debounce);
   if ((enc_pushn_state == 1) && (newenc_pushn_state == 0))
     {
-      Serial.println("enc pressed");
+      // Serial.println("enc pressed");
       enc_press  = 1;
     }
   else
@@ -331,13 +404,14 @@ void loop (void) {
     }
   if (UI_owns_display)
     {
-      Serial.print("menu ");
-      Serial.print(menu);
-      Serial.print(" line");
-      Serial.println(menu_line);
+      //Serial.print("menu ");
+      //Serial.print(menu);
+      //Serial.print(" line");
+      //Serial.println(menu_line);
       do_menu();
     }
 }
+
 
 void do_menu (void )
 {
@@ -530,6 +604,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   int      value;
   uint8_t  mvalue[6]; // mac address
   uint8_t  msg[21];   // 20 chars and 0 terminator
+  char     logmsg[30]; // for building logging messages
   int match ;
   cmd = in_buf[read_pointer++];
   out_buf[0]=0;
@@ -588,20 +663,22 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
       // FIXME add v, i
 
     case 'D':
+      // sscanf(in_buf, "%1c%10s", &cmd, &out_buf);  // whatever followed the 'm'
+      // nope, cannot make sscanf work for a char then a 0 terminated string. ????
+      field2 = (in_buf[2] - (uint8_t) 1) & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
+      //   jump over WD0=12340            
+      for (read_pointer=4; read_pointer < 24; read_pointer++)
+	{
+	  out_buf[read_pointer-4] = in_buf[read_pointer];
+	  if (in_buf[read_pointer] == 0)
+	    { out_buf[read_pointer-4]= ' ';
+	      break;
+	    }
+	}
+      snprintf(logmsg, 30, "B%c %s", in_buf[2], out_buf);
+      logger(logmsg);
       if (! UI_owns_display)
 	{
-	  // sscanf(in_buf, "%1c%10s", &cmd, &out_buf);  // whatever followed the 'm'
-	  // nope, cannot make sscanf work for a char then a 0 terminated string. ????
-	  field2 = (in_buf[2] - (uint8_t) 1) & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
-	  //   jump over WD0=12340            
-	  for (read_pointer=4; read_pointer < 24; read_pointer++)
-	    {
-	      out_buf[read_pointer-4] = in_buf[read_pointer];
-	      if (in_buf[read_pointer] == 0)
-		{ out_buf[read_pointer-4]= ' ';
-		  break;
-		}
-	    }
 	  lcd.setCursor(0,field2);
 	  lcd.print(out_buf);
 	}
@@ -651,10 +728,169 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   }    
 }
 
-
-void open_logfile (void)
+void do_serial_if_ready (void)
 {
+  int serial_byte;
+  if (Serial.available())
+    {
+      serial_byte = Serial.read();
+      if ((serial_byte != '\n') && (serial_buf_pointer < longest_record))
+	{
+	  serial_buf[serial_buf_pointer] = serial_byte;  // write char to buffer if space is available
+	  serial_buf_pointer++;
+	}    
+      if (serial_byte == '\n') {
+	serial_buf[serial_buf_pointer] = (uint8_t) 0;  // write string terminator to buffer
+	if (serial_buf_pointer >= 1) {  // at least a command letter
+	  parse_buf(serial_buf, return_buf, 127);           // parse the buffer if at least one char in it.
+	  Serial.print(return_buf);
+	}
+	serial_buf_pointer = 0;
+      }
+    }
 }
+
+
+void open_logfile (void) 
+{
+  openFile(SD, logfile);
+  file.seek(0);             // always truncate a file that exists as I'm doing cluster writes
+  // file.open("log.txt", O_WRONLY | O_APPEND);
+}
+
 void close_logfile (void)
 {
+  flush();
+  file.close();
 }
+
+void logger (char*message)
+{ if (logging)
+    appendtoFile(message);
+}
+
+void openFile(fs::FS &fs, const char *path) {
+  Serial.printf("Opening to file: %s\n", path);
+  file = fs.open(path, FILE_WRITE); // open at end of current file
+  if (!file) {
+    Serial.println("Failed to open file for write");
+  }
+}
+
+// for  short messages, <100 each after timestamp added
+void appendtoFile(char *message) {
+  uint16_t buf_remaining;
+  uint8_t *buf;    //  pointer to buf of uint8's
+  uint8_t *obuf;
+  uint32_t msize;
+  unsigned long day;
+  String gtime;
+  //unsigned long epoch_s;
+  
+  
+  const uint8_t max_msg_size = 100;
+  char msg[max_msg_size];
+  // add timestamp
+  //Serial.print("append millis=");
+  //Serial.println(millis());
+  day = rtc.getDay()-1;
+   //Serial.print("day millis=");
+   //Serial.println(millis());
+  gtime = rtc.getTime();
+  //Serial.print("time millis=");
+  //Serial.println(millis());
+  //epoch_s = rtc.getEpoch();
+  //Serial.print("epoch millis=");
+  //Serial.println(millis());
+  
+  //  snprintf(msg, max_msg_size, "%ld %s\n", epoch_s, message); 
+  snprintf(msg, max_msg_size, "%2d:%s %s\n", day, gtime, message); 
+  //Serial.print("snprintf millis=");
+  //Serial.println(millis());
+  buf_remaining = sdblksize - sdbuf_ptr;
+  if (which_sdbuf == 0)
+    {
+       buf  = sdbuf0;
+       obuf = sdbuf1;
+    }
+  else
+    {
+      buf  = sdbuf1;
+      obuf = sdbuf0;
+    }
+  //Serial.print("choose buf millis=");
+  //Serial.println(millis());
+  msize = strlen(msg);
+  //Serial.print("strlen millis=");
+  //Serial.println(millis());
+  if (buf_remaining > msize)
+    {
+      buf += sdbuf_ptr;
+      memcpy(buf, msg, msize);
+      sdbuf_ptr+= msize;
+    }
+  else if (buf_remaining = msize)
+    {
+      memcpy(buf + sdbuf_ptr, msg, msize);
+      sdbuf_ptr= 0;
+      file.write(buf, sdblksize);
+      which_sdbuf++;
+      if (which_sdbuf == 2)
+	which_sdbuf = 0;
+    }
+  else // too small to fit msg in buf
+    {
+      memcpy(buf + sdbuf_ptr, msg, buf_remaining);
+      file.write(buf, sdblksize);
+      sdbuf_ptr= msize-buf_remaining;
+      memcpy(obuf, msg+buf_remaining, sdbuf_ptr);
+      which_sdbuf++;
+      if (which_sdbuf == 2)
+	which_sdbuf = 0;
+     }
+  //Serial.print("end append millis=");
+  //Serial.println(millis());
+
+}
+
+void flush (void)
+{
+  uint8_t *buf;  // buf is a pointer to array of chars
+  if (which_sdbuf == 0)
+    buf  = sdbuf0;
+  else
+    buf  = sdbuf1;
+  file.write(buf, sdbuf_ptr);
+}
+
+void listDir(fs::FS &fs, const char *dirname, uint8_t levels) {
+  Serial.printf("Listing directory: %s\n", dirname);
+
+  File root = fs.open(dirname);
+  if (!root) {
+    Serial.println("Failed to open directory");
+    return;
+  }
+  if (!root.isDirectory()) {
+    Serial.println("Not a directory");
+    return;
+  }
+
+  File file = root.openNextFile();
+  while (file) {
+    if (file.isDirectory()) {
+      Serial.print("  DIR : ");
+      Serial.println(file.name());
+      if (levels) {
+        listDir(fs, file.path(), levels - 1);
+      }
+    } else {
+      Serial.print("  FILE: ");
+      Serial.print(file.name());
+      Serial.print("  SIZE: ");
+      Serial.println(file.size());
+    }
+    file = root.openNextFile();
+  }
+}
+
