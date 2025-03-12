@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'psu  Time-stamp: "2025-03-12 09:37:13 john"';
+// my $ver =  'psu  Time-stamp: "2025-03-12 11:59:14 john"';
 
 // this is the app to run the espnow2serial (vichyctl) on the DPM8624 power supply the mcc talks to.
 // use tools -> board ->  ESP32 Dev module 
@@ -43,7 +43,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "PSU 12 Mar 2025 Revc";
+const char * version = "PSU 12 Mar 2025 Revd";
 
 Preferences psuPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -379,7 +379,7 @@ void do_serial2_if_ready (void)
 	if (serial2_buf_pointer >= 1) {                      // at least a command letter
 	  {
 	    Serial.printf("%s\n", serial2_buf); // always send s2 output to s0 debug console
-	    strncpy(outgoing_msg.message, return_buf, msgbuflen);
+	    strncpy(outgoing_msg.message, serial2_buf, msgbuflen);
 	      esp_err_t result = ESP_OK;
 	    // return the message via ESP-NOW to whomever sent the prev command
 	    if ((in_mac[0] == mcc_mac[0]) && (in_mac[1] == mcc_mac[1]) && (in_mac[2] == mcc_mac[2]) &&
