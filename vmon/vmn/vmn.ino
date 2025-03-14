@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-13 18:24:36 john"';
+// my $ver =  'vmn   Time-stamp: "2025-03-14 19:42:31 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -55,7 +55,7 @@ const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
 
-const char * version = "VMON 13 Mar 2025 Revb";
+const char * version = "VMON 14 Mar 2025 Reva";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -98,8 +98,9 @@ unsigned long last_voltage_time;         // time last power supply voltage was t
 const unsigned long voltage_update_period = 1;  // seconds.
 bool adc_is_converting = false;
 
-unsigned long last_voltage_initiate_time;         // time last power supply voltage and current was polled at
+unsigned long last_vmon_time;         // time last power supply voltage and current was polled at
 
+  
 
 void setup (void) {
   Serial.begin(115200);
@@ -187,23 +188,26 @@ void loop (void)
 	}
       last_temp_update_time = rtc.getEpoch();
     }
-
-  // update voltage if its due 
+  
+    {
+ // update voltage if its due 
   if (rtc.getEpoch() > (last_voltage_time + voltage_update_period))
     {
       if (adc_is_converting)
-	{
-	  while(adc.isBusy()) { Serial.println("adc is busy?");}
-	  voltage = adcgain * (adc.getResult_V() + adc0);
-	  adc_is_converting = false;
-	}
+       {
+         while(adc.isBusy()) { Serial.println("adc is busy?");}
+         voltage = adcgain * (adc.getResult_V() + adc0);
+         adc_is_converting = false;
+       }
       else
-	{
-	  adc.startSingleMeasurement();
-	  adc_is_converting = true;
-	}
+       {
+         adc.startSingleMeasurement();
+         adc_is_converting = true;
+       }
       last_voltage_time = rtc.getEpoch();
     }
+
+  
 }
 
 
@@ -253,7 +257,7 @@ void load_operational_params(void)
    vmonPrefs.end();                                      // Close our preferences namespace.
 }
 
-void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
+void parse_buf (char * in_buf, char * out_buf, int out_buf_len, uint8_t channel)
 {
   // Z eraZe NV memory
   // Rf Read and print Field,
@@ -328,7 +332,13 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	break;
 
       case 'b':
+	if (channel != 2)
 	snprintf(out_buf, out_buf_len, "balance_req=%d\n", balance);
+	else
+	  {
+	    snprintf(out_buf, out_buf_len, ":%crb=%dC%c%c\n", board_address, balance, '0', '0');
+	    insert_cs(out_buf);
+	  }
 	break;
 
       case 'c':
@@ -336,21 +346,43 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	break;
 
       case 'v':
-	snprintf(out_buf, out_buf_len, "voltage=%fV\n", voltage);
+	if (channel != 2)
+	  snprintf(out_buf, out_buf_len, "voltage=%fV\n", voltage);
+	else // add checksum, : address
+	  {
+	    snprintf(out_buf, out_buf_len, ":%crv=%fV%c%c\n", board_address, voltage, '0', '0');
+	    insert_cs(out_buf);
+	  }
 	break;
 
       case 'r': // had to go UTF8 to get the degree symbol in serial monitor
-	snprintf(out_buf, out_buf_len, "resistor_temp=%d%c%cC\n", resistor_temperature, char(0xC2), char(0xB0));
+	if (channel != 2)
+	  snprintf(out_buf, out_buf_len, "resistor_temp=%d%c%cC\n", resistor_temperature, char(0xC2), char(0xB0));
+	else
+	  {
+	    snprintf(out_buf, out_buf_len, ":%crr=%dC%c%c\n", board_address, resistor_temperature, '0', '0');
+	    insert_cs(out_buf);
+	  }
+	  
+	  
 	break;
 
       case 's':
+	if (channel != 2)
 	snprintf(out_buf, out_buf_len, "battery_temp=%d%c%cC\n", battery_temperature, char(0xc2),char(0xb0));
+	else
+	  {
+	    snprintf(out_buf, out_buf_len, ":%crs=%dC%c%c\n", board_address, battery_temperature, '0', '0');
+	    insert_cs(out_buf);
+	  }
 	break;
       }
       break;
     
 
   case 'W':
+    if (channel != 2)
+      {
     // first case, WA=3     decimal integer up to ~5 sig figures
     match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
 
@@ -416,7 +448,8 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
     }      
     break;
     // end of 'W'
-  }    
+  }
+  }
 }
 
 // S1 msg  gets parsed
@@ -437,7 +470,7 @@ void do_serial_if_ready (void)
 	  serial_buf[serial_buf_pointer] = (uint8_t) 0;  // write string terminator to buffer
 	  if (serial_buf_pointer >= 1)                  // at least a command letter
 	    {
-	      parse_buf(serial_buf, return_buf, 127);  // parse the buffer if at least one char in it.
+	      parse_buf(serial_buf, return_buf, 127,0);  // parse the buffer if at least one char in it.
 	      Serial.print(return_buf);
 	    }
 	  serial_buf_pointer = 0;
@@ -464,7 +497,7 @@ void do_serial2_if_ready (void)
 	    Serial.printf("%s\n", serial2_buf); // always send s2 input to s0 debug console
 	    if ((serial2_buf[0] == ':') && (serial2_buf[1] == board_address))
 	      {
-		parse_buf(serial2_buf+2, return_buf, 127);  // parse the buffer, same parser,
+		parse_buf(serial2_buf+2, return_buf, 127,2);  // parse the buffer, same parser,
 		                                             // skip first 2 chars :<my_addr>
 		Serial2.print(return_buf);
 	      }
@@ -475,3 +508,20 @@ void do_serial2_if_ready (void)
 }
 
 
+// given a string that ends in : stuff '0' '0' \n 0, replace the two '0' chars with a ascii hex checksum such
+// that the checksum of the string from [0] to the last character in <stuff> plus the checksum is 0. 
+void insert_cs (char * buffer)
+{
+  uint8_t length = strlen(buffer);
+  int cs_pos = length - 3;
+  if (cs_pos < 0)
+    return;
+  uint8_t cs = 0;
+  int i;
+  for (i=0; i < cs_pos; i++)
+    cs += buffer[i];
+  cs = ~cs + 1;
+  sprintf(buffer + cs_pos, "%02x\n", cs);
+}
+  
+  

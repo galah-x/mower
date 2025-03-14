@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'psu  Time-stamp: "2025-03-12 11:59:14 john"';
+// my $ver =  'psu  Time-stamp: "2025-03-14 18:24:27 john"';
 
 // this is the app to run the espnow2serial (vichyctl) on the DPM8624 power supply the mcc talks to.
 // use tools -> board ->  ESP32 Dev module 

@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-11 10:30:07 john"';
+// my $ver =  'mcc  Time-stamp: "2025-03-14 18:40:33 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -64,7 +64,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 11 Mar 2025 Reva";
+const char * version = "MCC 14 Mar 2025 Reva";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -591,16 +591,16 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   //                         D=display WD0=string   write display line 0..3 with given string
   //                         Mx mac    WMP=<12 ascii hex digits>  mac for Psu or Mco
   //                        
-  uint8_t read_pointer = 0;
   uint8_t  cmd;
   uint8_t  field;
   uint8_t  field2;
+  uint8_t field3;
   int      value;
   uint8_t  mvalue[6]; // mac address
   uint8_t  msg[21];   // 20 chars and 0 terminator
   char     logmsg[30]; // for building logging messages
   int match ;
-  cmd = in_buf[read_pointer++];
+  cmd = in_buf[0];
   out_buf[0]=0;
   
   switch (cmd) {
@@ -608,9 +608,9 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
     reinit_NVM();
     load_operational_params();
     break;
-
+    
   case 'R':
-    field = in_buf[read_pointer++];
+    field = in_buf[1];
     switch (field)
       {
 	// FIXME support v,i read voltage and current settings from PSU and report.
@@ -652,70 +652,77 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   case 'W':
     // first case, WA=3     decimal integer up to ~5 sig figures
     match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
-
-    switch (field) {
-      // FIXME add v, i
-    case 'D':
-      // sscanf(in_buf, "%1c%10s", &cmd, &out_buf);  // whatever followed the 'm'
-      // nope, I cannot make sscanf work for a char then a 0 terminated string. So do a manual scan
-      field2 = (in_buf[2] - (uint8_t) 1) & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
-      //   jump over WD0=12340            
-      for (read_pointer=4; read_pointer < 24; read_pointer++)
-	{
-	  out_buf[read_pointer-4] = in_buf[read_pointer];
-	  if (in_buf[read_pointer] == 0)
-	    { out_buf[read_pointer-4]= ' ';
-	      break;
-	    }
-	}
-      snprintf(logmsg, 30, "B%c %s", in_buf[2], out_buf);
-      logger(logmsg);
-      if (! UI_owns_display)
-	{
-	  lcd.setCursor(0,field2);
-	  lcd.print(out_buf);
-	}
-      out_buf[0]=0;
-      break;
-      
-    case 'E':
-      digitalWrite(power48V_en_pin, value);
-      break;
-
-    case 'H':
-      mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
-      mccPrefs.putInt("fan_on_temp", value);               
-      mccPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-      
-    case 'L':
-      mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
-      mccPrefs.putInt("fan_off_temp", value);               
-      mccPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-      
-    case 'l':
-      mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
-      mccPrefs.putBool("log", value);               
-      mccPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-      
-    case 'M':  // WMP=MACADDRESS for the guy to respond to
-      match =  sscanf(in_buf, "%c%c%c=%2x%2x%2x%2x%2x%2x", &cmd, &field,&field2,
-		      &mvalue[0],&mvalue[1],&mvalue[2],&mvalue[3],&mvalue[4],&mvalue[5]);
-      
-      mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
-      if (field2 == 'P') 
-	mccPrefs.putBytes("psu_mac", mvalue, 6);
-      if (field2 == 'M') 
-	mccPrefs.putBytes("mco_mac", mvalue, 6);
-      mccPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-    }      
+    
+    switch (field)
+      {
+	// FIXME add v, i
+      case 'D':
+	// sscanf(in_buf, "%1c%10s", &cmd, &out_buf);  // whatever followed the 'm'
+	// nope, I cannot make sscanf work for a char then a 0 terminated string. So do a manual scan
+	field2 = (in_buf[2] - (uint8_t) 1) & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
+	field3 = (in_buf[2] - (uint8_t) 1) & 0x4; // ascii display column to write to [31..34] +=> 0123 after anding with
+	if (field3 != 0 )
+	  field3 = 10;    // support writing to second column.
+	
+	//   jump over WD0=12340
+	int i;
+	for (i=4; i < 24; i++)
+	  {
+	    out_buf[i-4] = in_buf[i];
+	    if (in_buf[i] == 0)
+	      {
+		out_buf[i-4]= ' ';
+		break;
+	      }
+	  }
+	snprintf(logmsg, 30, "B%c %s", in_buf[2], out_buf);
+	logger(logmsg);
+	if (! UI_owns_display)
+	  {
+	    lcd.setCursor(field3,field2);
+	    lcd.print(out_buf);
+	  }
+	out_buf[0]=0;
+	break;
+	
+      case 'E':
+	digitalWrite(power48V_en_pin, value);
+	break;
+	
+      case 'H':
+	mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
+	mccPrefs.putInt("fan_on_temp", value);               
+	mccPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'L':
+	mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
+	mccPrefs.putInt("fan_off_temp", value);               
+	mccPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'l':
+	mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
+	mccPrefs.putBool("log", value);               
+	mccPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'M':  // WMP=MACADDRESS for the guy to respond to
+	match =  sscanf(in_buf, "%c%c%c=%2x%2x%2x%2x%2x%2x", &cmd, &field,&field2,
+			&mvalue[0],&mvalue[1],&mvalue[2],&mvalue[3],&mvalue[4],&mvalue[5]);
+	
+	mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
+	if (field2 == 'P') 
+	  mccPrefs.putBytes("psu_mac", mvalue, 6);
+	if (field2 == 'M') 
+	  mccPrefs.putBytes("mco_mac", mvalue, 6);
+	mccPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+      }      
     break;
     // end of 'W'
   }    
