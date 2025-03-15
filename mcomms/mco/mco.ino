@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-15 18:23:30 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-16 09:02:45 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -96,7 +96,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "MCO 15 Mar 2025 Revb";
+const char * version = "MCO 16 Mar 2025 Reva";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -210,6 +210,14 @@ uint32_t last_vmon_time=0;
 const uint32_t vmon_period_millis = 20000 / vmon_ii_max ; // roughly 1s for testing 
 uint8_t vmon_which[] ={  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3 };
 uint8_t vmon_ltr[]   ={ 'v','v','v','v','r','r','r','r','v','v','v','v','s','s','s','s','v','v','v','v','e','e','e','e'};
+
+// vmon polling performance work
+struct poll_perf
+{
+  uint32_t issue;
+  uint32_t resp;
+} vmon_polltime[vmons];
+
 
 // psu polling
 bool suspend_psu_polling = false;
@@ -409,6 +417,12 @@ void loop (void)
   // update voltage from vmons if its due . update all about once per second
   if (millis()  > (last_vmon_time + vmon_period_millis))
     {
+      if (vmon_ii < 4) // its a pointer to a ordering structure, only an address for the first 4
+	{
+	  Serial.printf("recording poll for %d\n", vmon_ii+1);
+	  // delay(100);
+	  vmon_polltime[vmon_ii].issue = millis();
+	}
       Serial2.printf(":%1dR%c\n", 1+ vmon_which[vmon_ii], vmon_ltr[vmon_ii]);
       vdata[vmon_which[vmon_ii]].sent++;
       vmon_ii++;
@@ -929,7 +943,13 @@ void parse2_buf (char * in_buf, uint8_t length)
 	case 'v':
 	  match = sscanf(in_buf + 4, "=%fV", &fvalue);
 	  if (match == 1)
-	    vdata[address].volt=fvalue;
+	    {
+	      vdata[address].volt=fvalue;
+	      vmon_polltime[address].resp = millis();
+	      Serial.printf("vmon %d serial voltage poll took %d milliseconds\n", address+1,
+			    vmon_polltime[address].resp - vmon_polltime[address].issue);
+	    }
+			    
 	  else
 	    vdata[address].protocol_err++;
 	  break;

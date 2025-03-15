@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-15 12:33:00 john"';
+// my $ver =  'vmn   Time-stamp: "2025-03-16 08:38:18 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -55,7 +55,7 @@ const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
 
-const char * version = "VMON 15 Mar 2025 Reva";
+const char * version = "VMON 16 Mar 2025 Revb";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -96,7 +96,6 @@ bool doing_resistor_temp = true;
 
 unsigned long last_voltage_time;         // time last power supply voltage was touched
 const unsigned long voltage_update_period = 1;  // seconds.
-bool adc_is_converting = false;
 
 unsigned long last_vmon_time;         // time last power supply voltage and current was polled at
 
@@ -135,7 +134,7 @@ void setup (void) {
      adc.setCompareChannels(ADS1115_COMP_0_1);    // measure between 0 and 1.
      adc.setConvRate(ADS1115_8_SPS);              // 8 samples per sec, slowest.
      adc.setAlertPinMode(ADS1115_DISABLE_ALERT);  // not using voltage range checks
-     adc.setMeasureMode(ADS1115_SINGLE);          // initiate measurements
+     adc.setMeasureMode(ADS1115_CONTINUOUS);      // initiate measurements
    
    // check NVM looks defined  
    vmonPrefs.begin("vmonPrefs", RO_MODE);     // Open our namespace (or create it if it doesn't exist)
@@ -190,24 +189,20 @@ void loop (void)
     }
   
    // update voltage if its due 
-  if (rtc.getEpoch() > (last_voltage_time + voltage_update_period))
-    {
-      if (adc_is_converting)
-	{
-	  while(adc.isBusy()) { Serial.println("adc is busy?");}
-	  voltage = adcgain * (adc.getResult_V() + adc0);
-	  adc_is_converting = false;
-	}
-      else
-	{
-	  adc.startSingleMeasurement();
-	  adc_is_converting = true;
-	}
-      last_voltage_time = rtc.getEpoch();
-    }
+//  if (rtc.getEpoch() > (last_voltage_time + voltage_update_period))
+//    {
+//      while(adc.isBusy()) { Serial.println("adc is busy?");}
+//      voltage = adcgain * (adc.getResult_V() + adc0);
+//      last_voltage_time = rtc.getEpoch();
+//    }
 }
 
-
+float get_voltage ()
+{
+  float volt;
+  volt = adcgain * (adc.getResult_V() + adc0);
+  return volt;
+}
   
 void reinit_NVM (void)
 {
@@ -344,10 +339,10 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len, uint8_t channel)
 
       case 'v':
 	if (channel != 2)
-	  snprintf(out_buf, out_buf_len, "voltage=%fV\n", voltage);
+	  snprintf(out_buf, out_buf_len, "voltage=%fV\n", get_voltage());
 	else // add checksum, : address
 	  {
-	    snprintf(out_buf, out_buf_len, ":%crv=%fV%c%c\n", board_address, voltage, '0', '0');
+	    snprintf(out_buf, out_buf_len, ":%crv=%fV%c%c\n", board_address, get_voltage(), '0', '0');
 	    insert_cs(out_buf);
 	  }
 	break;
