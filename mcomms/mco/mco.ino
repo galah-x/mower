@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-15 08:58:18 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-15 18:23:30 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -45,7 +45,9 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include "FRAM.h"
+// #include "FRAM.h"            // works, but seems incompatible with ADS1115_WE
+#include "Adafruit_FRAM_I2C.h"  // only supports single byte access, but doesn't break ADC.
+
 // #define DEBUG
 
 // for preferences
@@ -53,23 +55,29 @@
 #define RO_MODE true
 
 const uint8_t vmons = 4;  // how many vmons am I servicing 
+
 struct vsdata
 {
-  float     volt = 0.0;         // battery voltage
-  int16_t   battemp = 0;        // battery temperature
-  int16_t   restemp = 0;        // resistor temperature
-  uint32_t  mostrecent = 0;     // timestamp of most recent message from device
-  uint32_t  received = 0;       // number of messages I've received from this board   
-  uint32_t  sent = 0;           // number of messages I've sent to this board
-  uint8_t   balance = 0;        // should it be balancing?
-  uint8_t   spare1 = 0;
-  uint16_t  protocol_err = 0;   // lets keep the struct aligned
-};
-struct vsdata vdata[vmons];   // state structure for all the vmons    
+  float     volt ;         // battery voltage
+  int16_t   battemp;        // battery temperature
+  int16_t   restemp;        // resistor temperature
+  uint32_t  mostrecent;     // timestamp of most recent message from device
+  uint32_t  received;       // number of messages I've received from this board   
+  uint32_t  sent;           // number of messages I've sent to this board
+  uint8_t   balance;        // should it be balancing?
+  uint8_t   spare1;
+  uint16_t  protocol_err;   // lets keep the struct aligned
+} vdata[vmons];   // state structure for all the vmons    
+
 int32_t s2_comms_errors = 0;
 
+// #define NOADC
+
+#ifndef NOADC
 const uint8_t adc_addr = 0x48;
+
 ADS1115_WE adc = ADS1115_WE(adc_addr); // I2C connected ads1115 16b adcb  Used for battery voltage.
+#endif
 
 // serial is used for debug and for programming NVM
 const uint8_t longest_record = 24;  //   worst is display comand WD1=12345678901234567890
@@ -88,7 +96,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "MCO 14 Mar 2025 Reva";
+const char * version = "MCO 15 Mar 2025 Revb";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -138,14 +146,17 @@ struct_message response_data;
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&response_data, incomingData, sizeof(response_data));
-  //  Serial.print("received ");
+  // Serial.print("received ");
   // Serial.print(len);
-  //Serial.print(" bytes from ");  
-  //Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
+  // Serial.print(" bytes from ");  
+  // Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
   /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
      fields 12 to 17 seem to be the source MAC. rest isn't obvious */
 
-  parse_buf(response_data.message);
+  // from psu?  Record polled readings
+  if ((mac[12] == psu_mac[0]) && (mac[13] == psu_mac[1]) && (mac[14] == psu_mac[2]) &&
+      (mac[15] == psu_mac[3]) && (mac[16] == psu_mac[4]) && (mac[17] == psu_mac[5]))
+    parse_wifi_buf(response_data.message);
 }
 
 /* IOs  definitions */
@@ -178,8 +189,8 @@ const uint16_t current_update_period = 1; // seconds.
 //const uint16_t vmon_update_period = 1;  // seconds.
 //uint8_t vmon_upto = 0;
 
-bool adc_is_converting = false;
-FRAM fram;
+// FRAM fram;
+Adafruit_FRAM_I2C fram     = Adafruit_FRAM_I2C();
 
 // beeper
 // setting PWM properties
@@ -195,8 +206,9 @@ bool last_beep_state=0;
 uint8_t vmon_ii =0;
 const uint8_t vmon_ii_max =24;
 uint32_t last_vmon_time=0;
-const uint32_t vmon_period_millis = 1000 / vmon_ii_max ; // roughly 40 ms 
-uint8_t vmon_which[] ={ '1','2','3','4','1','2','3','4','1','2','3','4','1','2','3','4','1','2','3','4','1','2','3','4' };
+//const uint32_t vmon_period_millis = 1000 / vmon_ii_max ; // roughly 40 ms 
+const uint32_t vmon_period_millis = 20000 / vmon_ii_max ; // roughly 1s for testing 
+uint8_t vmon_which[] ={  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3 };
 uint8_t vmon_ltr[]   ={ 'v','v','v','v','r','r','r','r','v','v','v','v','s','s','s','s','v','v','v','v','e','e','e','e'};
 
 // psu polling
@@ -204,13 +216,32 @@ bool suspend_psu_polling = false;
 uint8_t psu_ii =0;
 uint32_t last_psu_time=0;
 const uint8_t psu_ii_max = 3;
-const uint32_t psu_period_millis = 1000 / psu_ii_max ; // roughly 300 ms 
+const uint32_t psu_period_millis = 2000 / psu_ii_max ; // roughly 300 ms 
 uint8_t psu_addr[] ={ 30, 31, 12 };
 
 void setup (void) {
+  Wire.begin();   //   Including Wire.begin seems to break FRAM ???
   Serial.begin(115200);
   Serial.println(version);
+  
+  // interestingly, while rx=16 txd=17 is supposedly the default pin allocation,  Serial2 doesn't
+  // work without explicitly filling in the pin numbers here
+  Serial2.begin(9600, SERIAL_8N1, 16, 17);  
 
+  //init vmon structure
+  int i;
+  for (i=0;i<4;i++)
+    {
+      vdata[i].volt=0.0;
+      vdata[i].battemp=0;
+      vdata[i].restemp=0;
+      vdata[i].mostrecent=0;
+      vdata[i].received=0;
+      vdata[i].sent=0;
+      vdata[i].balance=0;
+      vdata[i].protocol_err=0;
+    }     
+  Serial.println("init NVM");
   // initialize NVM  
    mcoPrefs.begin("mcoPrefs", RO_MODE);     // Open our namespace (or create it if it doesn't exist)
    bool tpInit = mcoPrefs.isKey("nvsInit"); // Test for the existence of the "already initialized" key.
@@ -228,7 +259,7 @@ void setup (void) {
    pinMode(charger_connected_pin, INPUT);
    pinMode(soc_pps_pin, OUTPUT);
 
-   digitalWrite(fram_wp_pin,  HIGH);
+      digitalWrite(fram_wp_pin,  HIGH);
 
 
    // buzzer allocate
@@ -248,18 +279,8 @@ void setup (void) {
 
    // at startup, confirm all 4 vmons are present.
    // play a beep code if not so.
-
-   // init adc
-   if(!adc.init()){
-     Serial.println("ADS1115 not connected!");
-   }
-   adc.setVoltageRange_mV(ADS1115_RANGE_4096);  // 4.096V input range.
-   // input attenuator about 0.2  0.2 * 15V max = 3V
-   adc.setCompareChannels(ADS1115_COMP_0_1);    // measure between 0 and 1.
-   adc.setConvRate(ADS1115_8_SPS);              // 8 samples per sec, slowest.
-   adc.setAlertPinMode(ADS1115_DISABLE_ALERT);  // not using voltage range checks
-   adc.setMeasureMode(ADS1115_SINGLE);          // initiate measurements
-
+   Serial.println("init FRAM");
+   //   if (!fram.begin(0x50, fram_wp_pin))
    if (!fram.begin(0x50))
      {
        Serial.println("FRAM not connected!");
@@ -287,6 +308,19 @@ void setup (void) {
        write_SOC(1, 3600000 * 50);    // initilize to 50% as I have no idea
        write_SOC(2, 3600000 * 50);    // initilize to 50% as I have no idea
      }       
+#ifndef NOADC
+  Serial.println("init ADS1115");
+   // init adc
+   if(!adc.init()){
+     Serial.println("ADS1115 not connected!");
+   }
+   adc.setVoltageRange_mV(ADS1115_RANGE_4096);  // 4.096V input range.
+   // input attenuator about 0.2  0.2 * 15V max = 3V
+   adc.setCompareChannels(ADS1115_COMP_0_1);    // measure between 0 and 1.
+   adc.setConvRate(ADS1115_8_SPS);              // 8 samples per sec, slowest.
+   adc.setAlertPinMode(ADS1115_DISABLE_ALERT);  // not using voltage range checks
+   adc.setMeasureMode(ADS1115_CONTINUOUS);          // initiate measurements
+#endif
    // init esp_now wifi 
    WiFi.mode(WIFI_STA);
 
@@ -343,44 +377,40 @@ void loop (void)
   // update current and SOC state if its due 
   if (rtc.getEpoch() > (last_current_update_time + current_update_period))
     {
-      if (adc_is_converting)
+#ifndef NOADC
+      while(adc.isBusy()) {
+	Serial.println("adc is busy?");
+	delay(1000);
+      }
+      battery_current = adc_gain * (adc.getResult_V() + adc_offset);
+      //        in mAS                  in A              to mA, period is 2x current_update_period  
+      int32_t soc = get_SOC(0) + (int32_t) (battery_current * 2000.0 * current_update_period);
+      write_SOC(0, soc);
+      write_SOC(1, soc);
+      write_SOC(2, soc);
+      int soc_f =     336 * ( (float) soc / (float) battery_capacity);     
+      ledcAttachChannel(soc_pps_pin, soc_f, resolution, soc_pwm_channel);
+      
+      if (last_beep_state)
 	{
-	  while(adc.isBusy()) { Serial.println("adc is busy?");}
-	  battery_current = adc_gain * (adc.getResult_V() + adc_offset);
-	  adc_is_converting = false;
-	  //        in mAS                  in A              to mA, period is 2x current_update_period  
-	  int32_t soc = get_SOC(0) + (int32_t) (battery_current * 2000.0 * current_update_period);
-	  write_SOC(0, soc);
-	  write_SOC(1, soc);
-	  write_SOC(2, soc);
-	  int soc_f =     336 * ( (float) soc / (float) battery_capacity);     
-	  ledcAttachChannel(soc_pps_pin, soc_f, resolution, soc_pwm_channel);
-
-	  if (last_beep_state)
-	    {
-	      ledcWrite(buz_en_pin, 0);     // beeper off
-	      last_beep_state = false;
-	    }
-	  else
-	    {
-	      if (digitalRead(charger_connected_pin) && (soc < beep_SOC))
-		ledcWrite(buz_en_pin, 128);     // beeper on
-	      last_beep_state = true;
-	    }
-		
+	  ledcWrite(buz_en_pin, 0);     // beeper off
+	  last_beep_state = false;
 	}
-      else  // every current_update_period the adc gets started, then read, etc. 
+      else
 	{
-	  adc.startSingleMeasurement();
-	  adc_is_converting = true;
+	  if (digitalRead(charger_connected_pin) && (soc < beep_SOC))
+	    ledcWrite(buz_en_pin, 128);     // beeper on
+	  last_beep_state = true;
 	}
+#endif
       last_current_update_time = rtc.getEpoch();
     }
   
   // update voltage from vmons if its due . update all about once per second
   if (millis()  > (last_vmon_time + vmon_period_millis))
     {
-      Serial2.printf(":%cr%c\n", vmon_which[vmon_ii], vmon_ltr[vmon_ii]);
+      Serial2.printf(":%1dR%c\n", 1+ vmon_which[vmon_ii], vmon_ltr[vmon_ii]);
+      vdata[vmon_which[vmon_ii]].sent++;
       vmon_ii++;
       if (vmon_ii >= vmon_ii_max)
 	vmon_ii = 0;
@@ -388,16 +418,19 @@ void loop (void)
     }
 
   
-      // poll psu
+  // poll psu
+
+  
   // update voltage/current/enable from psu if its due . update all about once per second
   if (millis()  > (last_psu_time + psu_period_millis))
     {
       if (! suspend_psu_polling)
 	{
-	  Serial2.printf(":%cr%c\n", vmon_which[vmon_ii], vmon_ltr[vmon_ii]);
-	  vmon_ii++;
-	  if (vmon_ii >= vmon_ii_max)
-	    vmon_ii = 0;
+	  sprintf(response_data.message, ":01r%02d=0,\n", psu_addr[psu_ii]);
+	  psu_ii++;
+	  if (psu_ii >= psu_ii_max)
+	    psu_ii = 0;
+	  esp_now_send(psu_mac, (uint8_t *) &response_data, sizeof(response_data));
 	}
       last_psu_time = millis();
     }
@@ -465,21 +498,21 @@ void load_operational_params(void)
    mcoPrefs.getBytes("psumac", psu_mac, 6);             // load power supply mac
    mcoPrefs.getBytes("mccmac", mcc_mac, 6);             // load mco/cmt supply mac
    mcoPrefs.getBytes("cmtmac", cmt_mac, 6);             // load mco/cmt supply mac
-   mcoPrefs.getFloat("adco",  adc_offset);              // current adc offset term
-   mcoPrefs.getFloat("adcg", adc_gain);                 // current adc gain term
-   mcoPrefs.getFloat("psug", psu_offset);               // cal term from local voltage to psu 
-   mcoPrefs.getFloat("psuo", psu_gain);                 // cal term from local voltage to psu 
-   mcoPrefs.getFloat("icc",  initial_charge_current);   // initial charge current
-   mcoPrefs.getFloat("icv",  initial_charge_voltage);   // initial charge voltage 13.8*4 = 55.2
-   mcoPrefs.getFloat("tcc",  topoff_charge_current);    // topoff charge current
-   mcoPrefs.getFloat("tcv",  topoff_charge_voltage);    // topoff charge voltage 14.0*4 = 56
-   mcoPrefs.getFloat("tc",   transition_current);       // transition current
-   mcoPrefs.getFloat("fc",   cutoff_current);           // final current
-   mcoPrefs.getFloat("mbv",  max_battery_voltage);      // max single battery voltage
-   mcoPrefs.getFloat("bbv",  batt_balance_voltage); // start balancing a battery above this 3.45 * 4 =13.8
-   mcoPrefs.getFloat("bbt",  batt_balance_tol_voltage); // battery balance tolerance
-   mcoPrefs.getLong("bsoc",  beep_SOC);                 // beep SOC, 10%
-   mcoPrefs.getLong("bcap",  battery_capacity);         // battery capacity in mAS  100AH = 360e6 maS 
+   adc_offset = mcoPrefs.getFloat("adco");              // current adc offset term
+   adc_gain = mcoPrefs.getFloat("adcg");                // current adc gain term
+   psu_offset = mcoPrefs.getFloat("psuo");              // cal term from local voltage to psu 
+   psu_gain = mcoPrefs.getFloat("psug");                // cal term from local voltage to psu 
+   initial_charge_current = mcoPrefs.getFloat("icc");   // initial charge current
+   initial_charge_voltage = mcoPrefs.getFloat("icv");   // initial charge voltage 13.8*4 = 55.2
+   topoff_charge_current = mcoPrefs.getFloat("tcc");    // topoff charge current
+   topoff_charge_voltage = mcoPrefs.getFloat("tcv");    // topoff charge voltage 14.0*4 = 56
+   transition_current = mcoPrefs.getFloat("tc");        // transition current
+   cutoff_current = mcoPrefs.getFloat("fc");            // final current
+   max_battery_voltage = mcoPrefs.getFloat("mbv");      // max single battery voltage
+   batt_balance_voltage = mcoPrefs.getFloat("bbv");     // start balancing a battery above this 3.45 * 4 =13.8
+   batt_balance_tol_voltage = mcoPrefs.getFloat("bbt"); // battery balance tolerance
+   beep_SOC = mcoPrefs.getLong("bsoc");                 // beep SOC, 10%
+   battery_capacity = mcoPrefs.getLong("bcap");         // battery capacity in mAS  100AH = 360e6 maS 
 
    // All done. Last run state (or the factory default) is now restored.
    mcoPrefs.end();                                      // Close our preferences namespace.
@@ -562,11 +595,11 @@ void parse_buf (char * in_buf)
 	address = (in_buf[2] & 0x03) -1 ;   // convert ascii 1..4 ie 0x31 to 0x34 to 0..3  31->2 34->1  
 	if (address < 0)
 	  address=3;
-	Serial.printf("Vmon %d voltage=%f temp=%dC resistor=%dC updated %s s ago msgs=%d errs=%d\n",
+	Serial.printf("Vmon %d voltage=%1.3f temp=%1dC resistor=%1dC updated %1d seconds ago msgs s=%1d r=%1d errs=%1d\n",
 		      address+1, vdata[address].volt,
 		      vdata[address].battemp, vdata[address].restemp,
 		      rtc.getEpoch() - vdata[address].mostrecent,
-		      vdata[address].protocol_err); 
+		      vdata[address].sent, vdata[address].received, vdata[address].protocol_err); 
 	break;
       case 't' :
 	Serial.printf("current time %d %s\n", rtc.getEpoch(), rtc.getTime()); 
@@ -586,11 +619,11 @@ void parse_buf (char * in_buf)
 		      cmt_mac[0],cmt_mac[1],cmt_mac[2],cmt_mac[3],cmt_mac[4],cmt_mac[5]);
 	break;
       case 'I' :
-	Serial.printf("Initial charge voltage=%2.2V current=%2.3A\n",
+	Serial.printf("Initial charge voltage=%2.2fV current=%2.3fA\n",
 		      initial_charge_voltage, initial_charge_current);
 	break;
       case 'T' :
-	Serial.printf("Topoff charge voltage=%2.2V current=%2.3A\n",
+	Serial.printf("Topoff charge voltage=%2.2fV current=%2.3fA\n",
 		      topoff_charge_voltage, topoff_charge_current);
 	break;
       case 'G' :
@@ -610,11 +643,11 @@ void parse_buf (char * in_buf)
 		      beep_SOC, 100*beep_SOC/battery_capacity);
 	break;
       case 'S' :
-	Serial.printf("Battery capacity=%d mAS %dAH\n",
+	Serial.printf("Battery capacity=%ld mAS %ldAH\n",
 		      battery_capacity, battery_capacity/3600000);
 	break;
       case 'V':
-	snprintf(out_buf, out_buf_len, "%s\n", version);
+	Serial.println(version);
 	break;
       }
       break;
@@ -771,14 +804,20 @@ void set_psu_e(int value)
 uint32_t get_SOC (uint16_t address)
 {
   uint32_t retval;
-  retval  = fram.read32(address);
+  //  retval  = fram.read32(address);
+  retval  = (uint32_t) (fram.read(address*4) << 24)  +  (uint32_t) (fram.read(address*4+1) << 16)
+    + (uint32_t) ( fram.read(address*4+2) << 8)      + (uint32_t) fram.read(address*4+3);     
   return retval;
 }
 
 void write_SOC (uint16_t address, int32_t data)
 {
   digitalWrite(fram_wp_pin, LOW);
-  fram.write32(address, data);
+  // fram.write32(address, data);
+  fram.write(address*4,   (uint8_t) (data >>24));
+  fram.write(address*4+1,  (uint8_t) (data >>16));
+  fram.write(address*4+2, (uint8_t) (data >>8 ));
+  fram.write(address*4+3, (uint8_t) (data ));
   digitalWrite(fram_wp_pin, HIGH);
 }
     
@@ -838,13 +877,20 @@ void parse2_buf (char * in_buf, uint8_t length)
   uint8_t   cs_carried;
   uint8_t   cs_calc;
   int i;
+  char scanbuf[3];
+  
   // uint8_t length; input points to the terminating 0. Messages shorter than :aokcs0 dont get here.
   // do checksum validation
-  // hmmm, scanf requires a const address string. so tail anchor with \n
-  match = sscanf(in_buf, "%2x\n", &cs_carried);
+  scanbuf[0] = in_buf[length-2];
+  scanbuf[1] = in_buf[length-1];
+  scanbuf[2] = 0;
+  
+  // hmmm, scanf requires a const address string.
+  match = sscanf(scanbuf, "%2x", &cs_carried);
   if (match != 1)
     {
       s2_comms_errors++;
+      Serial.printf("cs match failed %d %s\n", match, scanbuf);
       return;
     }
   cs_calc = cs_carried;
@@ -853,17 +899,20 @@ void parse2_buf (char * in_buf, uint8_t length)
   if (cs_calc != 0)
     {
       s2_comms_errors++;
+      Serial.println("cs failed");
       return;
     }
   if (in_buf[0] != ':')
     {
       s2_comms_errors++;
+      Serial.println("not :");
       return;
     }
   address = (in_buf[1] & 0x0f) -1;   // 0 based uint
   if (address >= vmons)
     {
       s2_comms_errors++;
+      Serial.println("not valid addr");
       return;
     }
 
@@ -910,9 +959,11 @@ void parse2_buf (char * in_buf, uint8_t length)
 	  break;
 
 	default: 
-	    vdata[address].protocol_err++;
+	  vdata[address].protocol_err++;
+	  break;
 	} // end of case 'r'
-
+      break;
+      
     case 'o' :
       if (in_buf[3] != 'k')
 	    vdata[address].protocol_err++;
@@ -920,6 +971,7 @@ void parse2_buf (char * in_buf, uint8_t length)
 
     default:
       vdata[address].protocol_err++;
+      break;
     }
 }
 
@@ -937,7 +989,8 @@ void do_serial2_if_ready (void)
       if (serial_byte == '\n')
 	{
 	  serial2_buf[serial2_buf_pointer] = (uint8_t) 0;  // write string terminator to buffer
-	  if (serial_buf_pointer >= 6) {                 // min permitted is :aokcs0
+	  // Serial.println(serial2_buf);
+	  if (serial2_buf_pointer >= 6) {                 // min permitted is :aokcs0
 	    parse2_buf(serial2_buf, serial2_buf_pointer);      // parse the buffer if min message length.
 	  }
 	  else
@@ -945,6 +998,55 @@ void do_serial2_if_ready (void)
 	serial2_buf_pointer = 0;
 	}
     }
+}
+
+void parse_wifi_buf (char * buf)
+{
+  //if (psutest)
+  //  {
+  if (buf[0]==':')
+    {
+      if ((buf[3]=='o') && (buf[4]=='k'))
+	{ // typical write response.
+	  //	  Serial.println("psu: ok");
+	}
+      else if (buf[3]=='r')
+	{ // general read handler
+	  int cmdaddr;
+	  int value;
+	  int matched;
+	  matched = sscanf(buf, ":01r%2d=%d.", &cmdaddr, &value);
+	  //	  Serial.printf("%s matched=%d addr=%d val=%d\n", buf, matched, cmdaddr, value);
+	  if (matched==2) {
+	    //	    if (cmdaddr == 0)
+	    //  Serial.printf("psu: max_voltage=%d.%02dV\n", value/100, value % 100);  
+	    //if (cmdaddr == 1)
+	    //  Serial.printf("psu: max_current=%d.%03dA\n", value/1000, value % 1000);  
+	    //if (cmdaddr == 10)
+	    //  Serial.printf("psu: set_voltage=%d.%02dV\n", value/100, value % 100);  
+	    //if (cmdaddr == 11)
+	    //  Serial.printf("psu: set_current=%d.%03dA\n", value/1000, value % 1000);  
+	    //if (cmdaddr == 12)
+	    //  Serial.printf("psu: enable=%d\n", value );  
+	    if (cmdaddr == 30)
+	      //  Serial.printf("psu: meas_voltage=%d.%02dV\n", value/100, value % 100);  
+	      charger_voltage = (float) value / 100.0;
+	    else if (cmdaddr == 31)
+	      //	      Serial.printf("psu: meas_current=%d.%03dA\n", value/1000, value % 1000);  
+	      charger_current = (float) value / 1000.0;
+	    else if (cmdaddr == 12)
+	      if (value == 0)
+		charger_enable = 0;
+		// Serial.print("psu: status=CV\n");
+	      else 
+		charger_enable = 1;
+		// Serial.print("psu: status=CC\n");
+	    // if (cmdaddr == 33)
+	    //  Serial.printf("psu: temperature=%d\n", value);  
+	  }
+	}
+    }
+  //  psutest = false; 
 }
 
 

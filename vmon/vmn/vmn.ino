@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-14 19:42:31 john"';
+// my $ver =  'vmn   Time-stamp: "2025-03-15 12:33:00 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -55,7 +55,7 @@ const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
 
-const char * version = "VMON 14 Mar 2025 Reva";
+const char * version = "VMON 15 Mar 2025 Reva";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -154,7 +154,7 @@ void setup (void) {
    // interestingly, while rx=16 txd=17 is supposedly the default pin allocation,  Serial2 doesn't
    // work without explicitly filling in the pin numbers here
    Serial2.begin(s2baud, SERIAL_8N1, rxd2_pin, txd2_pin);  
-
+   
    Serial.println("done setup");
 }
 
@@ -189,25 +189,22 @@ void loop (void)
       last_temp_update_time = rtc.getEpoch();
     }
   
-    {
- // update voltage if its due 
+   // update voltage if its due 
   if (rtc.getEpoch() > (last_voltage_time + voltage_update_period))
     {
       if (adc_is_converting)
-       {
-         while(adc.isBusy()) { Serial.println("adc is busy?");}
-         voltage = adcgain * (adc.getResult_V() + adc0);
-         adc_is_converting = false;
-       }
+	{
+	  while(adc.isBusy()) { Serial.println("adc is busy?");}
+	  voltage = adcgain * (adc.getResult_V() + adc0);
+	  adc_is_converting = false;
+	}
       else
-       {
-         adc.startSingleMeasurement();
-         adc_is_converting = true;
-       }
+	{
+	  adc.startSingleMeasurement();
+	  adc_is_converting = true;
+	}
       last_voltage_time = rtc.getEpoch();
     }
-
-  
 }
 
 

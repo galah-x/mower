@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'psu  Time-stamp: "2025-03-14 18:24:27 john"';
+// my $ver =  'psu  Time-stamp: "2025-03-15 17:36:14 john"';
 
 // this is the app to run the espnow2serial (vichyctl) on the DPM8624 power supply the mcc talks to.
 // use tools -> board ->  ESP32 Dev module 
@@ -11,7 +11,7 @@
 // test cmt MAC is 5c013b6c9938
 // test mcc MAC is 5c013b6cf4fc      wifi to serial adapter for the power supply. Originally a vichy mm adaptor
 // test psu MAC (ME) is 5c013b6ce2d0
-
+// test mco mac is 5c013b6c6a44
 #include <Preferences.h>  // the NV memory interface
 #include <esp_now.h>
 #include <WiFi.h>
@@ -43,7 +43,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "PSU 12 Mar 2025 Revd";
+const char * version = "PSU 15 Mar 2025 Revb";
 
 Preferences psuPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -51,6 +51,7 @@ Preferences psuPrefs;  // NVM structure
 // variables filled from NVM
 uint8_t cmt_mac[6];
 uint8_t mcc_mac[6];
+uint8_t mco_mac[6];
 uint8_t in_mac[6];  // incoming message source MAC
 int s2baud;
 
@@ -109,6 +110,9 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       if ((in_mac[0] == mcc_mac[0]) && (in_mac[1] == mcc_mac[1]) && (in_mac[2] == mcc_mac[2]) &&
 	  (in_mac[3] == mcc_mac[3]) && (in_mac[4] == mcc_mac[4]) && (in_mac[5] == mcc_mac[5]))
 	result = esp_now_send(mcc_mac, (uint8_t *) &outgoing_msg, msgbuflen);
+      else if ((in_mac[0] == mco_mac[0]) && (in_mac[1] == mco_mac[1]) && (in_mac[2] == mco_mac[2]) &&
+	       (in_mac[3] == mco_mac[3]) && (in_mac[4] == mco_mac[4]) && (in_mac[5] == mco_mac[5]))
+	result = esp_now_send(mco_mac, (uint8_t *) &outgoing_msg, msgbuflen);
       else if ((in_mac[0] == cmt_mac[0]) && (in_mac[1] == cmt_mac[1]) && (in_mac[2] == cmt_mac[2]) &&
 	       (in_mac[3] == cmt_mac[3]) && (in_mac[4] == cmt_mac[4]) && (in_mac[5] == cmt_mac[5]))
 	result = esp_now_send(cmt_mac, (uint8_t *) &outgoing_msg, msgbuflen);
@@ -174,6 +178,12 @@ void setup (void) {
       Serial.println("Failed to add peer");
       return;
     }
+    // Register peer mco
+    memcpy(peerInfo.peer_addr, mco_mac, 6);
+    if (esp_now_add_peer(&peerInfo) != ESP_OK){
+      Serial.println("Failed to add peer");
+      return;
+    }
     // Register peer cmt
     memcpy(peerInfo.peer_addr, cmt_mac, 6);
     if (esp_now_add_peer(&peerInfo) != ESP_OK){
@@ -201,7 +211,12 @@ void loop (void)
 
 
   
-const uint8_t default_mac[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+
+const uint8_t default_mac[]     = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+const uint8_t default_mco_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0x6a, 0x44 };
+const uint8_t default_mcc_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0xf4, 0xfc };
+const uint8_t default_psu_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0xe2, 0xd0 };
+const uint8_t default_cmt_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0x99, 0x38 };
 
 void reinit_NVM (void)
 {
@@ -216,8 +231,9 @@ void reinit_NVM (void)
   //  our keys and store the initial "factory default" values.
 
   psuPrefs.putInt("s2baud", 9600);          // baud rate serial 2 DPM8624
-  psuPrefs.putBytes("mcc_mac", default_mac, 6); 
-  psuPrefs.putBytes("cmt_mac", default_mac, 6); 
+  psuPrefs.putBytes("mcc_mac", default_mcc_mac, 6); 
+  psuPrefs.putBytes("mco_mac", default_mco_mac, 6); 
+  psuPrefs.putBytes("cmt_mac", default_cmt_mac, 6); 
 
   psuPrefs.putBool("nvsInit", true);            // Create the "already initialized"
   //  key and store a value.
@@ -236,6 +252,7 @@ void load_operational_params(void)
 
    s2baud = psuPrefs.getInt("s2baud");
    psuPrefs.getBytes("mcc_mac", mcc_mac, 6);           
+   psuPrefs.getBytes("mco_mac", mco_mac, 6);           
    psuPrefs.getBytes("cmt_mac", cmt_mac, 6);           
 
    // All done. Last run state (or the factory default) is now restored.
@@ -280,9 +297,10 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	break;
 
       case 'M':
-	snprintf(out_buf, out_buf_len, "PSU_MAC=%02x%02x%02x%02x%02x%02x MCC=%02x%02x%02x%02x%02x%02x CMT=%02x%02x%02x%02x%02x%02x\n",
+	snprintf(out_buf, out_buf_len, "PSU_MAC=%02x%02x%02x%02x%02x%02x MCC=%02x%02x%02x%02x%02x%02x MCO=%02x%02x%02x%02x%02x%02x CMT=%02x%02x%02x%02x%02x%02x\n",
 		 baseMac[0],baseMac[1],baseMac[2],baseMac[3],baseMac[4],baseMac[5],
 		 mcc_mac[0],mcc_mac[1],mcc_mac[2],mcc_mac[3],mcc_mac[4],mcc_mac[5],
+		 mco_mac[0],mco_mac[1],mco_mac[2],mco_mac[3],mco_mac[4],mco_mac[5],
 		 cmt_mac[0],cmt_mac[1],cmt_mac[2],cmt_mac[3],cmt_mac[4],cmt_mac[5]
 		 );
 	break;
@@ -314,6 +332,8 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
       psuPrefs.begin("psuPrefs", RW_MODE);         // Open our namespace for write
       if (field2 == 'M') 
 	psuPrefs.putBytes("mcc_mac", mvalue, 6);
+      if (field2 == 'O') 
+	psuPrefs.putBytes("mco_mac", mvalue, 6);
       if (field2 == 'C') 
 	psuPrefs.putBytes("cmt_mac", mvalue, 6);
       psuPrefs.end();                              // Close the namespace
@@ -385,6 +405,9 @@ void do_serial2_if_ready (void)
 	    if ((in_mac[0] == mcc_mac[0]) && (in_mac[1] == mcc_mac[1]) && (in_mac[2] == mcc_mac[2]) &&
 		(in_mac[3] == mcc_mac[3]) && (in_mac[4] == mcc_mac[4]) && (in_mac[5] == mcc_mac[5]))
 	      result = esp_now_send(mcc_mac, (uint8_t *) &outgoing_msg, msgbuflen);
+	    else if ((in_mac[0] == mco_mac[0]) && (in_mac[1] == mco_mac[1]) && (in_mac[2] == mco_mac[2]) &&
+		     (in_mac[3] == mco_mac[3]) && (in_mac[4] == mco_mac[4]) && (in_mac[5] == mco_mac[5]))
+	      result = esp_now_send(mco_mac, (uint8_t *) &outgoing_msg, msgbuflen);
 	    else if ((in_mac[0] == cmt_mac[0]) && (in_mac[1] == cmt_mac[1]) && (in_mac[2] == cmt_mac[2]) &&
 		     (in_mac[3] == cmt_mac[3]) && (in_mac[4] == cmt_mac[4]) && (in_mac[5] == cmt_mac[5]))
 	      result = esp_now_send(cmt_mac, (uint8_t *) &outgoing_msg, msgbuflen);
