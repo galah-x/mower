@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-16 08:38:18 john"';
+// my $ver =  'vmn   Time-stamp: "2025-03-16 10:48:14 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -10,7 +10,7 @@
   A vmon is per 12V LFP battery, and  runs off that battery.
   It physically bolts to the battery terminals.
   Its 12v to 5v switcher is enabled (by mco) (optically isolated) to minimize off state power consumption.
-  It chats to mco serially, responding to mcc polls with addresses.   (wifi is possible)
+  It chats to mco  via wifi.  This is the esp_now() branch.
 
   Vmon contains a calibrated 16 bit ADC to monitor the battery voltage.
   Vmon contains a passive balance circuit (aka a load resistor) to allow charge to be removed
@@ -31,8 +31,10 @@
 #include "ESP32Time.h"   // must be V2.x or newer. V1.04 takes 5s to return a time string. breaks logging 
 #include<ADS1115_WE.h>   // adc converter
 #include <stdio.h>
-
-#define DEBUG
+#include <esp_now.h>
+#include <WiFi.h>
+#include <esp_wifi.h>
+// #define DEBUG
 
 // for preferences
 #define RW_MODE false
@@ -45,20 +47,17 @@ const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 char serial_buf[record_size];
 uint8_t serial_buf_pointer;
 
-// serial2 is used for comms to mco
-const uint8_t longest_record2 = 24;  //   worst is display comand WD1=12345678901234567890
-const uint8_t record_size2 = longest_record2 + 2;    //  char char = nnnnn \n
-char serial2_buf[record_size2];
-uint8_t serial2_buf_pointer;
-
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-
-const char * version = "VMON 16 Mar 2025 Revb";
+const char * version = "VMON WIFI 16 Mar 2025 Reva";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
+
+uint8_t baseMac[6];         // my own mac address
+uint8_t mco_mac[6];
+uint8_t cmt_mac[6];
 
 int     balance_on_temp;
 int     balance_off_temp;
@@ -94,14 +93,52 @@ unsigned long last_temp_update_time;   // time last temperature was polled in se
 const unsigned long temp_update_period = 5; // seconds.
 bool doing_resistor_temp = true;
 
-unsigned long last_voltage_time;         // time last power supply voltage was touched
-const unsigned long voltage_update_period = 1;  // seconds.
+//unsigned long last_voltage_time;         // time last power supply voltage was touched
+// const unsigned long voltage_update_period = 1;  // seconds.
 
-unsigned long last_vmon_time;         // time last power supply voltage and current was polled at
+// unsigned long last_vmon_time;         // time last power supply voltage and current was polled at
 
+
+
+// create the wifi message struct
+
+typedef struct struct_message {
+  char message[msgbuflen];
+} struct_message;
+
+struct_message outgoing_data;
+struct_message incoming_data;
+
+esp_now_peer_info_t peerInfo;
+
+// wifi callback when data is sent
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+{
+}
+
+
+// callback function that will be executed when data is received
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  memcpy(&incoming_data.message, incomingData, sizeof(incoming_data));
+  // Serial.print("received ");
+  // Serial.print(len);
+  // Serial.print(" bytes from ");  
+  // Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
+  /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
+     fields 12 to 17 seem to be the source MAC. rest isn't obvious */
   
+  // from mco? 
+  if ((mac[12] == mco_mac[0]) && (mac[13] == mco_mac[1]) && (mac[14] == mco_mac[2]) &&
+      (mac[15] == mco_mac[3]) && (mac[16] == mco_mac[4]) && (mac[17] == mco_mac[5]))
+    {
+      parse_wifi_buf(incoming_data.message, outgoing_data.message, sizeof(outgoing_data.message));
+      esp_now_send(mco_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+    }
+}
+
 
 void setup (void) {
+  Wire.begin();  
   Serial.begin(115200);
   Serial.println(version);
 
@@ -148,12 +185,42 @@ void setup (void) {
 
    // init some general variables and IOs 
    serial_buf_pointer = 0;
-   serial2_buf_pointer = 0;
 
-   // interestingly, while rx=16 txd=17 is supposedly the default pin allocation,  Serial2 doesn't
-   // work without explicitly filling in the pin numbers here
-   Serial2.begin(s2baud, SERIAL_8N1, rxd2_pin, txd2_pin);  
-   
+   // init esp_now wifi 
+   WiFi.mode(WIFI_STA);
+
+   esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
+   Serial.printf("ESP32 MAC Address: %02x%02x%02x%02x%02x%02x\n",
+		 baseMac[0],baseMac[1],baseMac[2],baseMac[3],baseMac[4],baseMac[5]);
+
+   Serial.println("init espnow");
+   if (esp_now_init() != ESP_OK) {
+     Serial.println("Error initializing ESP-NOW");
+     return;
+   }
+
+   // Once ESPNow is successfully Inited, we will register for Send CB to
+   // get the status of Trasnmitted packet
+   esp_now_register_send_cb(OnDataSent);
+    
+   // Once ESPNow is successfully Inited, we will register for recv CB to
+   // get recv packer info
+   esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
+
+    Serial.println("register macs");
+    // Register peer mco
+    memcpy(peerInfo.peer_addr, mco_mac, 6);
+    peerInfo.channel = 0;  
+    peerInfo.encrypt = false;
+    
+    if (esp_now_add_peer(&peerInfo) != ESP_OK){
+      Serial.println("Failed to add peer");
+    }
+    // Register peer cmt
+    memcpy(peerInfo.peer_addr, cmt_mac, 6);
+    if (esp_now_add_peer(&peerInfo) != ESP_OK){
+      Serial.println("Failed to add peer");
+    }
    Serial.println("done setup");
 }
 
@@ -163,8 +230,7 @@ void loop (void)
 {
   // service serial character if any available.
   do_serial_if_ready();
-  do_serial2_if_ready();
-  
+
   // update temperature and monitor balance state if its due 
   if (rtc.getEpoch() > (last_temp_update_time + temp_update_period))
     {
@@ -187,14 +253,6 @@ void loop (void)
 	}
       last_temp_update_time = rtc.getEpoch();
     }
-  
-   // update voltage if its due 
-//  if (rtc.getEpoch() > (last_voltage_time + voltage_update_period))
-//    {
-//      while(adc.isBusy()) { Serial.println("adc is busy?");}
-//      voltage = adcgain * (adc.getResult_V() + adc0);
-//      last_voltage_time = rtc.getEpoch();
-//    }
 }
 
 float get_voltage ()
@@ -204,6 +262,10 @@ float get_voltage ()
   return volt;
 }
   
+const uint8_t default_mac[]     = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+const uint8_t default_mco_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0x6a, 0x44 };
+const uint8_t default_cmt_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0x99, 0x38 };
+
 void reinit_NVM (void)
 {
   Serial.println("Initializing NVM");
@@ -212,7 +274,7 @@ void reinit_NVM (void)
   //  must be our first-time run. We need to set up our Preferences namespace keys. So...
   vmonPrefs.begin("vmonPrefs", RW_MODE);       //  open it in RW mode.
   
-  // The .begin() method created the "mccPrefs" namespace and since this is our
+  // The .begin() method created the "vmnPrefs" namespace and since this is our
   //  first-time run we will create
   //  our keys and store the initial "factory default" values.
 
@@ -222,7 +284,8 @@ void reinit_NVM (void)
   vmonPrefs.putFloat("adcgain", 5.3);        // approx adc gain term
   vmonPrefs.putFloat("adc0", 0.0);           // adc 0 offset term
   vmonPrefs.putUChar("address", '0');        // board address
-
+  vmonPrefs.putBytes("cmtmac", default_cmt_mac, 6);  // mac address of tester
+  vmonPrefs.putBytes("mcomac", default_mco_mac, 6);  // mac address of mower comms controller 
   vmonPrefs.putBool("nvsInit", true);            // Create the "already initialized"
   //  key and store a value.
   // The "factory defaults" are created and stored so...
@@ -243,13 +306,14 @@ void load_operational_params(void)
   adcgain          = vmonPrefs.getFloat("adcgain");       // adc gain term
   adc0             = vmonPrefs.getFloat("adc0");          // adc 0 offset term
   board_address    = vmonPrefs.getUChar("address");         // board address
+  vmonPrefs.getBytes("mcomac", mco_mac, 6);             // load mco comms controller mac
+  vmonPrefs.getBytes("cmtmac", cmt_mac, 6);             // load cmt tester mac
   
-
    // All done. Last run state (or the factory default) is now restored.
    vmonPrefs.end();                                      // Close our preferences namespace.
 }
 
-void parse_buf (char * in_buf, char * out_buf, int out_buf_len, uint8_t channel)
+void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 {
   // Z eraZe NV memory
   // Rf Read and print Field,
@@ -257,8 +321,9 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len, uint8_t channel)
   //         A board address 1..4
   //         B baud rate on S2
   //         G adc gain
-  //         H highbalance temperature 
+  //         H high balance temperature 
   //         L low balance temperature  
+  //         M Macs
   //         O adc offset
   //         V version
   //         b current balance actual setting
@@ -273,15 +338,18 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len, uint8_t channel)
   //         G adc gain
   //         H highbalance temperature 
   //         L low balance temperature  
+  //         M[CO] Macs
   //         O adc offset
   //         b balance               
 
   uint8_t read_pointer = 0;
   uint8_t  cmd;
   uint8_t  field;
+  uint8_t  field2;
   int      value;
   float    fvalue;
   int match ;
+  uint8_t  mvalue[6]; // mac address
   cmd = in_buf[read_pointer++];
   out_buf[0]=0;
   
@@ -314,6 +382,13 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len, uint8_t channel)
       case 'L':
 	snprintf(out_buf, out_buf_len, "balance_on=%dC\n", balance_on_temp);
 	break;
+      case 'M':
+
+	Serial.printf("VMON_MAC=%02x%02x%02x%02x%02x%02x  MCO=%02x%02x%02x%02x%02x%02x CMT=%02x%02x%02x%02x%02x%02x\n",
+		      baseMac[0],baseMac[1],baseMac[2],baseMac[3],baseMac[4],baseMac[5],
+		      mco_mac[0],mco_mac[1],mco_mac[2],mco_mac[3],mco_mac[4],mco_mac[5],
+		      cmt_mac[0],cmt_mac[1],cmt_mac[2],cmt_mac[3],cmt_mac[4],cmt_mac[5]);
+	break;
 
       case 'O':
 	snprintf(out_buf, out_buf_len, "adc_offset=%f\n", adc0);
@@ -324,13 +399,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len, uint8_t channel)
 	break;
 
       case 'b':
-	if (channel != 2)
 	snprintf(out_buf, out_buf_len, "balance_req=%d\n", balance);
-	else
-	  {
-	    snprintf(out_buf, out_buf_len, ":%crb=%dC%c%c\n", board_address, balance, '0', '0');
-	    insert_cs(out_buf);
-	  }
 	break;
 
       case 'c':
@@ -338,109 +407,101 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len, uint8_t channel)
 	break;
 
       case 'v':
-	if (channel != 2)
 	  snprintf(out_buf, out_buf_len, "voltage=%fV\n", get_voltage());
-	else // add checksum, : address
-	  {
-	    snprintf(out_buf, out_buf_len, ":%crv=%fV%c%c\n", board_address, get_voltage(), '0', '0');
-	    insert_cs(out_buf);
-	  }
 	break;
 
       case 'r': // had to go UTF8 to get the degree symbol in serial monitor
-	if (channel != 2)
 	  snprintf(out_buf, out_buf_len, "resistor_temp=%d%c%cC\n", resistor_temperature, char(0xC2), char(0xB0));
-	else
-	  {
-	    snprintf(out_buf, out_buf_len, ":%crr=%dC%c%c\n", board_address, resistor_temperature, '0', '0');
-	    insert_cs(out_buf);
-	  }
-	  
-	  
 	break;
 
       case 's':
-	if (channel != 2)
 	snprintf(out_buf, out_buf_len, "battery_temp=%d%c%cC\n", battery_temperature, char(0xc2),char(0xb0));
-	else
-	  {
-	    snprintf(out_buf, out_buf_len, ":%crs=%dC%c%c\n", board_address, battery_temperature, '0', '0');
-	    insert_cs(out_buf);
-	  }
 	break;
       }
       break;
     
 
   case 'W':
-    if (channel != 2)
-      {
-    // first case, WA=3     decimal integer up to ~5 sig figures
-    match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
-
-    switch (field) {
-    case 'b' :   // balance
-      if (value == 0)
-	{
-	  balance = false;
-	  digitalWrite(balance_en_pin, LOW);
-	}
-      else
-	{
-	  balance = true;
-	  digitalWrite(balance_en_pin, HIGH);
-	}
-      snprintf(out_buf, out_buf_len, "ok\n");
-      break;
+    {
+      // first case, WA=3     decimal integer up to ~5 sig figures
+      match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
       
-    case 'A':
-      vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
-      vmonPrefs.putUChar("address", in_buf[3]);               
-      vmonPrefs.end();                              // Close the namespace
-      load_operational_params();
+      switch (field) {
+      case 'b' :   // balance
+	if (value == 0)
+	  {
+	    balance = false;
+	    digitalWrite(balance_en_pin, LOW);
+	  }
+	else
+	  {
+	    balance = true;
+	    digitalWrite(balance_en_pin, HIGH);
+	  }
+	snprintf(out_buf, out_buf_len, "ok\n");
+	break;
+	
+      case 'A':
+	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+	vmonPrefs.putUChar("address", in_buf[3]);               
+	vmonPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'B':
+	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+	vmonPrefs.putInt("s2baud", value);               
+	vmonPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'H':
+	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+	vmonPrefs.putInt("bal_off_temp", value);               
+	vmonPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'L':
+	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+	vmonPrefs.putInt("bal_on_temp", value);               
+	vmonPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'G':
+	match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
+	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+	vmonPrefs.putFloat("adcgain", fvalue);               
+	vmonPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'M':  // WMP=MACADDRESS for the guy to respond to
+	match =  sscanf(in_buf, "%c%c%c=%2x%2x%2x%2x%2x%2x", &cmd, &field,&field2,
+			&mvalue[0],&mvalue[1],&mvalue[2],&mvalue[3],&mvalue[4],&mvalue[5]);
+	
+	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+	if (field2 == 'O') 
+	  vmonPrefs.putBytes("mcomac", mvalue, 6);
+	else if (field2 == 'C') 
+	  vmonPrefs.putBytes("cmtmac", mvalue, 6);
+	vmonPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      case 'O':
+	match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
+	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+	vmonPrefs.putFloat("adc0", fvalue);               
+	vmonPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+	
+      }      
       break;
-      
-    case 'B':
-      vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
-      vmonPrefs.putInt("s2baud", value);               
-      vmonPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-      
-    case 'H':
-      vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
-      vmonPrefs.putInt("bal_off_temp", value);               
-      vmonPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-      
-    case 'L':
-      vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
-      vmonPrefs.putInt("bal_on_temp", value);               
-      vmonPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-      
-    case 'G':
-      match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
-      vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
-      vmonPrefs.putFloat("adcgain", fvalue);               
-      vmonPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-
-    case 'O':
-      match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
-      vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
-      vmonPrefs.putFloat("adc0", fvalue);               
-      vmonPrefs.end();                              // Close the namespace
-      load_operational_params();
-      break;
-      
-    }      
-    break;
-    // end of 'W'
-  }
+      // end of 'W'
+    }
   }
 }
 
@@ -462,7 +523,7 @@ void do_serial_if_ready (void)
 	  serial_buf[serial_buf_pointer] = (uint8_t) 0;  // write string terminator to buffer
 	  if (serial_buf_pointer >= 1)                  // at least a command letter
 	    {
-	      parse_buf(serial_buf, return_buf, 127,0);  // parse the buffer if at least one char in it.
+	      parse_buf(serial_buf, return_buf, 127);  // parse the buffer if at least one char in it.
 	      Serial.print(return_buf);
 	    }
 	  serial_buf_pointer = 0;
@@ -470,50 +531,57 @@ void do_serial_if_ready (void)
     }
 }
 
-void do_serial2_if_ready (void)
+// very limited parser for commands I expect to use only
+void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
 {
-  int serial2_byte;
-  if (Serial2.available())
+  uint8_t cmd;
+  uint8_t field;
+  
+  cmd = in_buf[0];
+  if (cmd == 'R')
     {
-      serial2_byte = Serial2.read();
-      // note: neither \r nor \n is written to buffer. a zero is added to the buffer on \n
-      if ((serial2_byte != '\n') && (serial2_buf_pointer < longest_record2))
-	{
-	  serial2_buf[serial2_buf_pointer] = serial2_byte;  // write char to buffer if space is available
-	  serial2_buf_pointer++;
-	}    
-      if (serial2_byte == '\n') {
-	serial2_buf[serial2_buf_pointer] = (uint8_t) 0;     // write string terminator to buffer
-	if (serial2_buf_pointer >= 2)                       // at least : and address
-	  {
-	    Serial.printf("%s\n", serial2_buf); // always send s2 input to s0 debug console
-	    if ((serial2_buf[0] == ':') && (serial2_buf[1] == board_address))
-	      {
-		parse_buf(serial2_buf+2, return_buf, 127,2);  // parse the buffer, same parser,
-		                                             // skip first 2 chars :<my_addr>
-		Serial2.print(return_buf);
-	      }
-	  }
-	serial2_buf_pointer = 0;
+      field = in_buf[1];
+      switch (field)
+      {
+      case 'V':
+	snprintf(out_buf, out_buf_len, "%s\n", version);
+	break;
+
+      case 'b':
+	snprintf(out_buf, out_buf_len, "b=%1d\n", digitalRead(balance_en_pin));
+	break;
+
+      case 'v':
+	snprintf(out_buf, out_buf_len, "v=%2.3f\n", get_voltage());
+	break;
+
+      case 'r':
+	snprintf(out_buf, out_buf_len, "r=%2dC\n", resistor_temperature);
+	break;
+
+      case 's':
+	snprintf(out_buf, out_buf_len, "s=%2dC\n", battery_temperature);
+	break;
       }
     }
-}
 
-
-// given a string that ends in : stuff '0' '0' \n 0, replace the two '0' chars with a ascii hex checksum such
-// that the checksum of the string from [0] to the last character in <stuff> plus the checksum is 0. 
-void insert_cs (char * buffer)
-{
-  uint8_t length = strlen(buffer);
-  int cs_pos = length - 3;
-  if (cs_pos < 0)
-    return;
-  uint8_t cs = 0;
-  int i;
-  for (i=0; i < cs_pos; i++)
-    cs += buffer[i];
-  cs = ~cs + 1;
-  sprintf(buffer + cs_pos, "%02x\n", cs);
+  else if (cmd == 'W')
+    {
+      field = in_buf[1];
+      switch (field)
+	{
+	case 'b':
+	  if (in_buf[3] == '0')
+	    balance = false;
+	  else
+	    balance=true;
+	  snprintf(out_buf, out_buf_len, "bok\n");
+	  break;
+	}
+    }
 }
-  
-  
+    
+    
+
+    
+

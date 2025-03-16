@@ -1,19 +1,19 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-16 09:02:45 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-16 17:17:15 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
 
 /* mco
-   (maybe) can can talk to the power supply to adjust current and voltage settings.
-     or maybe mcc does.
+   can can talk to the power supply to adjust current and voltage settings.
+
    mco is responsible for talking to the 4 vmons.
    And, directly or indirectly, psu.
    It has to report all relevant loggable info to mcc.
    It has to get the info from vmons. It runs this.
 
-   Locally, mco has access to the currne into/out of the batteries via current shunt and adc
+   Locally, mco has access to the current into/out of the batteries via current shunt and adc
    It intergates this to get SOC.
    It zeros SOC on empty, adjusting the battery capacity measure when that happens.
    It 100%s SOC on full, adjusting the battery capacity measure when that happens.
@@ -32,9 +32,13 @@
 */
 
 // test cmt MAC is 5c013b6c9938
-// test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
+// test mco MAC is 5c013b6c6a44   which replaces the cmt later in the dev process Mower COntroller
 // test psu MAC is       wifi to serial adapter for the power supply. Originally a vichy mm adaptor
 // test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController
+// test vmon1 MAC (ME) is 5c013b6c7d14   vmon # 1
+// test vmon2 MAC (ME) is 5c013b660c9c   vmon # 2
+// test vmon3 MAC (ME) is 5c013b6d1a48   vmon # 3
+// test vmon4 MAC (ME) is 5c013b6cea48   vmon # 4
 
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
@@ -49,6 +53,7 @@
 #include "Adafruit_FRAM_I2C.h"  // only supports single byte access, but doesn't break ADC.
 
 // #define DEBUG
+// #define MEAS_PERF
 
 // for preferences
 #define RW_MODE false
@@ -61,12 +66,13 @@ struct vsdata
   float     volt ;         // battery voltage
   int16_t   battemp;        // battery temperature
   int16_t   restemp;        // resistor temperature
-  uint32_t  mostrecent;     // timestamp of most recent message from device
+  uint32_t  mostrecent;     // timestamp of most recent volt message from device
   uint32_t  received;       // number of messages I've received from this board   
   uint32_t  sent;           // number of messages I've sent to this board
   uint8_t   balance;        // should it be balancing?
-  uint8_t   spare1;
+  uint8_t   act_balance;    // is it balancing?
   uint16_t  protocol_err;   // lets keep the struct aligned
+  uint8_t   mac[6];         // vmon mac address
 } vdata[vmons];   // state structure for all the vmons    
 
 int32_t s2_comms_errors = 0;
@@ -86,10 +92,10 @@ char serial_buf[record_size];
 uint8_t serial_buf_pointer;
 
 // serial2 is used for communicating with vmons
-const uint8_t longest_record2 = 24;  //   worst is display comand WD1=12345678901234567890
-const uint8_t record_size2 = longest_record2 + 2;    //  char char = nnnnn \n
-char serial2_buf[record_size2];
-uint8_t serial2_buf_pointer;
+//const uint8_t longest_record2 = 24;  //   worst is display comand WD1=12345678901234567890
+//const uint8_t record_size2 = longest_record2 + 2;    //  char char = nnnnn \n
+//char serial2_buf[record_size2];
+//uint8_t serial2_buf_pointer;
 
 
 uint8_t baseMac[6];         // my own mac address
@@ -104,6 +110,7 @@ Preferences mcoPrefs;  // NVM structure
 uint8_t psu_mac[6];
 uint8_t mcc_mac[6];
 uint8_t cmt_mac[6];
+
 float   initial_charge_current;
 float   initial_charge_voltage;
 float   topoff_charge_current;
@@ -153,10 +160,18 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
      fields 12 to 17 seem to be the source MAC. rest isn't obvious */
 
-  // from psu?  Record polled readings
-  if ((mac[12] == psu_mac[0]) && (mac[13] == psu_mac[1]) && (mac[14] == psu_mac[2]) &&
-      (mac[15] == psu_mac[3]) && (mac[16] == psu_mac[4]) && (mac[17] == psu_mac[5]))
-    parse_wifi_buf(response_data.message);
+  // from psu?  Record polled readings. more differences at end of mac string
+  if ((mac[17] == psu_mac[5]) && (mac[16] == psu_mac[4]) && (mac[15] == psu_mac[3]) &&
+      (mac[14] == psu_mac[2]) && (mac[13] == psu_mac[1]) && (mac[12] == psu_mac[0]))
+    parse_psu_wifi_buf(response_data.message);
+  // from a vmon?  Record polled readings
+  uint8_t i;
+  for (i=0; i< vmons; i++)
+    {
+      if ((mac[17] == vdata[i].mac[5]) && (mac[16] == vdata[i].mac[4]) && (mac[15] == vdata[i].mac[3]) &&
+	  (mac[14] == vdata[i].mac[2]) && (mac[13] == vdata[i].mac[1]) && (mac[12] == vdata[i].mac[0]))
+	parse_vmon_wifi_buf(response_data.message, i);
+    }
 }
 
 /* IOs  definitions */
@@ -185,10 +200,6 @@ uint32_t last_current_update_time;
 const uint16_t current_update_period = 1; // seconds.
 
 
-//uint32_t last_vmon_update_time;         // time last vmon was polled at
-//const uint16_t vmon_update_period = 1;  // seconds.
-//uint8_t vmon_upto = 0;
-
 // FRAM fram;
 Adafruit_FRAM_I2C fram     = Adafruit_FRAM_I2C();
 
@@ -201,23 +212,27 @@ const uint8_t beep_pwm_channel = 0;
 const uint8_t soc_pwm_channel = 1;
 bool last_beep_state=0;
 
-// vmon polling
+
+// vmon polling going to update vmon and psu more rapidly.
+// psu polls take a few 10s of ms, vmon polls 5ms.
+// but  thats not a delay, as the received data structure is handled asynchronously in a callback
 
 uint8_t vmon_ii =0;
 const uint8_t vmon_ii_max =24;
 uint32_t last_vmon_time=0;
 //const uint32_t vmon_period_millis = 1000 / vmon_ii_max ; // roughly 40 ms 
-const uint32_t vmon_period_millis = 20000 / vmon_ii_max ; // roughly 1s for testing 
+const uint32_t vmon_period_millis = 2000 / vmon_ii_max ; // roughly 1s for testing 
 uint8_t vmon_which[] ={  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3 };
-uint8_t vmon_ltr[]   ={ 'v','v','v','v','r','r','r','r','v','v','v','v','s','s','s','s','v','v','v','v','e','e','e','e'};
+uint8_t vmon_ltr[]   ={ 'v','v','v','v','r','r','r','r','v','v','v','v','s','s','s','s','v','v','v','v','b','b','b','b'};
 
+#ifdef MEAS_PERF
 // vmon polling performance work
 struct poll_perf
 {
   uint32_t issue;
   uint32_t resp;
 } vmon_polltime[vmons];
-
+#endif
 
 // psu polling
 bool suspend_psu_polling = false;
@@ -234,7 +249,7 @@ void setup (void) {
   
   // interestingly, while rx=16 txd=17 is supposedly the default pin allocation,  Serial2 doesn't
   // work without explicitly filling in the pin numbers here
-  Serial2.begin(9600, SERIAL_8N1, 16, 17);  
+  //Serial2.begin(9600, SERIAL_8N1, 16, 17);  
 
   //init vmon structure
   int i;
@@ -246,9 +261,11 @@ void setup (void) {
       vdata[i].mostrecent=0;
       vdata[i].received=0;
       vdata[i].sent=0;
-      vdata[i].balance=0;
+      vdata[i].balance=255;
       vdata[i].protocol_err=0;
-    }     
+      vdata[i].act_balance=255;
+    }
+  
   Serial.println("init NVM");
   // initialize NVM  
    mcoPrefs.begin("mcoPrefs", RO_MODE);     // Open our namespace (or create it if it doesn't exist)
@@ -281,7 +298,7 @@ void setup (void) {
 
    // init some general variables and IOs 
    serial_buf_pointer = 0;
-   serial2_buf_pointer = 0;
+   //serial2_buf_pointer = 0;
    last_current_update_time = rtc.getEpoch();
 
 
@@ -316,7 +333,7 @@ void setup (void) {
        write_SOC(1, 3600000 * 50);    // initilize to 50% as I have no idea
        write_SOC(2, 3600000 * 50);    // initilize to 50% as I have no idea
      }       
-#ifndef NOADC
+
   Serial.println("init ADS1115");
    // init adc
    if(!adc.init()){
@@ -328,7 +345,7 @@ void setup (void) {
    adc.setConvRate(ADS1115_8_SPS);              // 8 samples per sec, slowest.
    adc.setAlertPinMode(ADS1115_DISABLE_ALERT);  // not using voltage range checks
    adc.setMeasureMode(ADS1115_CONTINUOUS);          // initiate measurements
-#endif
+
    // init esp_now wifi 
    WiFi.mode(WIFI_STA);
 
@@ -357,20 +374,28 @@ void setup (void) {
     
     if (esp_now_add_peer(&peerInfo) != ESP_OK){
       Serial.println("Failed to add peer");
-      return;
     }
     // Register peer psu
     memcpy(peerInfo.peer_addr, psu_mac, 6);
     if (esp_now_add_peer(&peerInfo) != ESP_OK){
       Serial.println("Failed to add peer");
-      return;
     }
     // Register peer cmt
-    memcpy(peerInfo.peer_addr, cmt_mac, 6);
-    if (esp_now_add_peer(&peerInfo) != ESP_OK){
-      Serial.println("Failed to add peer");
-      return;
-    }
+    //memcpy(peerInfo.peer_addr, cmt_mac, 6);
+    //if (esp_now_add_peer(&peerInfo) != ESP_OK){
+    //  Serial.println("Failed to add peer");
+    //}
+    for (i=0; i< vmons; i++)
+      {
+	// Register vmons
+	memcpy(peerInfo.peer_addr, vdata[i].mac, 6);
+	Serial.printf("registering vmon%d mac = %02x%02x%02x%02x%02x%02x\n", i, vdata[i].mac[0], vdata[i].mac[1], vdata[i].mac[2], vdata[i].mac[3], vdata[i].mac[4], vdata[i].mac[5]); 
+	if (esp_now_add_peer(&peerInfo) != ESP_OK){
+	  Serial.println("Failed to add peer");
+	}
+      }
+    Serial.println("done setup");
+    
 }
 
    
@@ -379,7 +404,7 @@ void loop (void)
 {
   // service serial character if any available.
   do_serial_if_ready();
-  do_serial2_if_ready();
+  // do_serial2_if_ready();
 
   
   // update current and SOC state if its due 
@@ -412,18 +437,24 @@ void loop (void)
 	}
 #endif
       last_current_update_time = rtc.getEpoch();
+      
     }
   
   // update voltage from vmons if its due . update all about once per second
   if (millis()  > (last_vmon_time + vmon_period_millis))
     {
-      if (vmon_ii < 4) // its a pointer to a ordering structure, only an address for the first 4
+      uint8_t vmon_jj;
+      vmon_jj = vmon_ii % 8; 
+      if (vmon_jj < 4) // its a pointer to a ordering structure, only an address for the first 4
 	{
-	  Serial.printf("recording poll for %d\n", vmon_ii+1);
-	  // delay(100);
-	  vmon_polltime[vmon_ii].issue = millis();
+#ifdef MEAS_PERF
+	  vmon_polltime[vmon_jj].issue = millis();
+#endif
 	}
-      Serial2.printf(":%1dR%c\n", 1+ vmon_which[vmon_ii], vmon_ltr[vmon_ii]);
+      sprintf(response_data.message, "R%c\n",  vmon_ltr[vmon_ii]);
+      esp_now_send(vdata[vmon_which[vmon_ii]].mac, (uint8_t *) &response_data, sizeof(response_data));
+
+      // record a message sent on that channel
       vdata[vmon_which[vmon_ii]].sent++;
       vmon_ii++;
       if (vmon_ii >= vmon_ii_max)
@@ -462,6 +493,10 @@ const uint8_t default_mac[]     = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 const uint8_t default_mcc_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0xf4, 0xfc };
 const uint8_t default_psu_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0xe2, 0xd0 };
 const uint8_t default_cmt_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0x99, 0x38 };
+const uint8_t default_v1_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0x7d, 0x14 };
+const uint8_t default_v2_mac[]  = { 0x5c, 0x01, 0x3b, 0x66, 0x0c, 0x9c };  // random to check code for now
+const uint8_t default_v3_mac[]  = { 0x5c, 0x01, 0x3b, 0x6d, 0x1a, 0x48 };  // random to check code for now
+const uint8_t default_v4_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0xea, 0x48 };  // random to check code for now
 
 void reinit_NVM (void)
 {
@@ -478,6 +513,10 @@ void reinit_NVM (void)
   mcoPrefs.putBytes("cmtmac", default_cmt_mac, 6);  // mac address of tester
   mcoPrefs.putBytes("psumac", default_psu_mac, 6);  // mac address of power supply 
   mcoPrefs.putBytes("mccmac", default_mcc_mac, 6);  // mac address of power supply controller 
+  mcoPrefs.putBytes("v1mac",  default_v1_mac, 6);  // mac address of vmon # 1
+  mcoPrefs.putBytes("v2mac",  default_v2_mac, 6);  // mac address of vmon # 2
+  mcoPrefs.putBytes("v3mac",  default_v3_mac, 6);  // mac address of vmon # 3
+  mcoPrefs.putBytes("v4mac",  default_v4_mac, 6);  // mac address of vmon # 4
   mcoPrefs.putFloat("adco", 0.0);            // current adc offset term
   mcoPrefs.putFloat("adcg", 1.0);            // current adc gain term
   mcoPrefs.putFloat("psug",  1.0 );          // cal term from local voltage to psu 
@@ -512,6 +551,10 @@ void load_operational_params(void)
    mcoPrefs.getBytes("psumac", psu_mac, 6);             // load power supply mac
    mcoPrefs.getBytes("mccmac", mcc_mac, 6);             // load mco/cmt supply mac
    mcoPrefs.getBytes("cmtmac", cmt_mac, 6);             // load mco/cmt supply mac
+   mcoPrefs.getBytes("v1mac", vdata[0].mac, 6);               // load vmon 1 mac
+   mcoPrefs.getBytes("v2mac", vdata[1].mac, 6);               // load vmon  mac
+   mcoPrefs.getBytes("v3mac", vdata[2].mac, 6);               // load vmon  mac
+   mcoPrefs.getBytes("v4mac", vdata[3].mac, 6);               // load vmon  mac
    adc_offset = mcoPrefs.getFloat("adco");              // current adc offset term
    adc_gain = mcoPrefs.getFloat("adcg");                // current adc gain term
    psu_offset = mcoPrefs.getFloat("psuo");              // cal term from local voltage to psu 
@@ -580,6 +623,7 @@ void parse_buf (char * in_buf)
   uint8_t  cmd;
   uint8_t  field;
   uint8_t  field2;
+  uint8_t  field3;
   int      value;
   uint8_t  mvalue[6]; // mac address
   float    fvalue;
@@ -631,6 +675,11 @@ void parse_buf (char * in_buf)
 		      psu_mac[0],psu_mac[1],psu_mac[2],psu_mac[3],psu_mac[4],psu_mac[5],
 		      mcc_mac[0],mcc_mac[1],mcc_mac[2],mcc_mac[3],mcc_mac[4],mcc_mac[5],
 		      cmt_mac[0],cmt_mac[1],cmt_mac[2],cmt_mac[3],cmt_mac[4],cmt_mac[5]);
+	Serial.printf("VMON1_MAC=%02x%02x%02x%02x%02x%02x V2=%02x%02x%02x%02x%02x%02x V3=%02x%02x%02x%02x%02x%02x V4=%02x%02x%02x%02x%02x%02x\n",
+		      vdata[0].mac[0], vdata[0].mac[1], vdata[0].mac[2], vdata[0].mac[3], vdata[0].mac[4], vdata[0].mac[5], 
+		      vdata[1].mac[0], vdata[1].mac[1], vdata[1].mac[2], vdata[1].mac[3], vdata[1].mac[4], vdata[1].mac[5], 
+		      vdata[2].mac[0], vdata[2].mac[1], vdata[2].mac[2], vdata[2].mac[3], vdata[2].mac[4], vdata[2].mac[5], 
+		      vdata[3].mac[0], vdata[3].mac[1], vdata[3].mac[2], vdata[3].mac[3], vdata[3].mac[4], vdata[3].mac[5]);
 	break;
       case 'I' :
 	Serial.printf("Initial charge voltage=%2.2fV current=%2.3fA\n",
@@ -717,6 +766,19 @@ void parse_buf (char * in_buf)
 	mcoPrefs.putBytes("mccmac", mvalue, 6);
       else if (field2 == 'C') 
 	mcoPrefs.putBytes("cmtmac", mvalue, 6);
+      match =  sscanf(in_buf, "%c%c%c%c=%2x%2x%2x%2x%2x%2x", &cmd, &field, &field2, &field3,
+		      &mvalue[0],&mvalue[1],&mvalue[2],&mvalue[3],&mvalue[4],&mvalue[5]);
+      if (field2 == 'V')
+	{
+	  if (field3 == '1')
+	    mcoPrefs.putBytes("v1mac", mvalue, 6);
+	  else if (field3 == '2') 
+	    mcoPrefs.putBytes("v2mac", mvalue, 6);
+	  else if (field3 == '3') 
+	    mcoPrefs.putBytes("v3mac", mvalue, 6);
+	  else if (field3 == '4') 
+	    mcoPrefs.putBytes("v4mac", mvalue, 6);
+	}
       mcoPrefs.end();                              // Close the namespace
       load_operational_params();
       break;
@@ -858,172 +920,9 @@ void do_serial_if_ready (void)
 }
 
 
-// this is a parser for S2.  It records messages back from a vmon.
-// as this is a shared bus, I want a checksum.
-// :a<string>cs\n
-// WHERE : is start of message
-// a is the address of the sender ascii(31) .. ascii(34)
-// <string> is the response to some query from the tx side of this process
-// cs is a 2 character hex integer such that the sum of the ascii characters from the :
-//    to immediately before the cs / (last string char) inclusive is 0 base 256.
-// messages with illegal checksums are ignored and an error count is incremented.
-// it records the most timestamp of messages from each of the 4 vmons
-// it records the number of responses from each vmon
-// it stores voltage and temperatures from each vmon in a struct
-// it records responses from illegal addresses as a sort of error counter
 
-void parse2_buf (char * in_buf, uint8_t length)
+void parse_psu_wifi_buf (char * buf)
 {
-  /* the <string> part of the field I know about is 
-   * writes produce ok. I shall just ignore that here
-   * reads that I care about produce
-   *   rv=<float>V
-   *   rr=intC
-   *   rs=intC
-   *   rb=int.
-   */
-  
-  uint8_t   field;
-  int       value;
-  float     fvalue;
-  uint8_t   match ;
-  uint8_t   address;   // its a short integer here, not a char. 0 based!
-  uint8_t   cs_carried;
-  uint8_t   cs_calc;
-  int i;
-  char scanbuf[3];
-  
-  // uint8_t length; input points to the terminating 0. Messages shorter than :aokcs0 dont get here.
-  // do checksum validation
-  scanbuf[0] = in_buf[length-2];
-  scanbuf[1] = in_buf[length-1];
-  scanbuf[2] = 0;
-  
-  // hmmm, scanf requires a const address string.
-  match = sscanf(scanbuf, "%2x", &cs_carried);
-  if (match != 1)
-    {
-      s2_comms_errors++;
-      Serial.printf("cs match failed %d %s\n", match, scanbuf);
-      return;
-    }
-  cs_calc = cs_carried;
-  for (i=0; i<(length-2); i++)
-    cs_calc += in_buf[i];
-  if (cs_calc != 0)
-    {
-      s2_comms_errors++;
-      Serial.println("cs failed");
-      return;
-    }
-  if (in_buf[0] != ':')
-    {
-      s2_comms_errors++;
-      Serial.println("not :");
-      return;
-    }
-  address = (in_buf[1] & 0x0f) -1;   // 0 based uint
-  if (address >= vmons)
-    {
-      s2_comms_errors++;
-      Serial.println("not valid addr");
-      return;
-    }
-
-  // now basic checks are out of the way, lets record message and timestamp
-  // anything not understood is a protocol error
-  vdata[address].mostrecent = rtc.getEpoch();
-  vdata[address].received++;
-  
-  switch (in_buf[2])
-    {
-    case 'r':
-      switch (in_buf[3])
-	{
-	case 'v':
-	  match = sscanf(in_buf + 4, "=%fV", &fvalue);
-	  if (match == 1)
-	    {
-	      vdata[address].volt=fvalue;
-	      vmon_polltime[address].resp = millis();
-	      Serial.printf("vmon %d serial voltage poll took %d milliseconds\n", address+1,
-			    vmon_polltime[address].resp - vmon_polltime[address].issue);
-	    }
-			    
-	  else
-	    vdata[address].protocol_err++;
-	  break;
-
-	case 'r':
-	  match = sscanf(in_buf + 4, "=%dC", &value);
-	  if (match == 1)
-	    vdata[address].restemp=value;
-	  else
-	    vdata[address].protocol_err++;
-	  break;
-
-	case 's':
-	  match = sscanf(in_buf + 4, "=%dC", &value);
-	  if (match == 1)
-	    vdata[address].battemp=value;
-	  else
-	    vdata[address].protocol_err++;
-	  break;
-
-	case 'b':
-	  match = sscanf(in_buf + 4, "=%d.", &value);
-	  if (match == 1)
-	    vdata[address].balance=value;
-	  else
-	    vdata[address].protocol_err++;
-	  break;
-
-	default: 
-	  vdata[address].protocol_err++;
-	  break;
-	} // end of case 'r'
-      break;
-      
-    case 'o' :
-      if (in_buf[3] != 'k')
-	    vdata[address].protocol_err++;
-      break;
-
-    default:
-      vdata[address].protocol_err++;
-      break;
-    }
-}
-
-void do_serial2_if_ready (void)
-{
-  int serial_byte;
-  if (Serial2.available())
-    {
-      serial_byte = Serial2.read();
-      if ((serial_byte != '\n') && (serial2_buf_pointer < longest_record))
-	{
-	  serial2_buf[serial2_buf_pointer] = serial_byte;  // write char to buffer if space is available
-	  serial2_buf_pointer++;
-	}    
-      if (serial_byte == '\n')
-	{
-	  serial2_buf[serial2_buf_pointer] = (uint8_t) 0;  // write string terminator to buffer
-	  // Serial.println(serial2_buf);
-	  if (serial2_buf_pointer >= 6) {                 // min permitted is :aokcs0
-	    parse2_buf(serial2_buf, serial2_buf_pointer);      // parse the buffer if min message length.
-	  }
-	  else
-	    s2_comms_errors++;
-	serial2_buf_pointer = 0;
-	}
-    }
-}
-
-void parse_wifi_buf (char * buf)
-{
-  //if (psutest)
-  //  {
   if (buf[0]==':')
     {
       if ((buf[3]=='o') && (buf[4]=='k'))
@@ -1038,16 +937,6 @@ void parse_wifi_buf (char * buf)
 	  matched = sscanf(buf, ":01r%2d=%d.", &cmdaddr, &value);
 	  //	  Serial.printf("%s matched=%d addr=%d val=%d\n", buf, matched, cmdaddr, value);
 	  if (matched==2) {
-	    //	    if (cmdaddr == 0)
-	    //  Serial.printf("psu: max_voltage=%d.%02dV\n", value/100, value % 100);  
-	    //if (cmdaddr == 1)
-	    //  Serial.printf("psu: max_current=%d.%03dA\n", value/1000, value % 1000);  
-	    //if (cmdaddr == 10)
-	    //  Serial.printf("psu: set_voltage=%d.%02dV\n", value/100, value % 100);  
-	    //if (cmdaddr == 11)
-	    //  Serial.printf("psu: set_current=%d.%03dA\n", value/1000, value % 1000);  
-	    //if (cmdaddr == 12)
-	    //  Serial.printf("psu: enable=%d\n", value );  
 	    if (cmdaddr == 30)
 	      //  Serial.printf("psu: meas_voltage=%d.%02dV\n", value/100, value % 100);  
 	      charger_voltage = (float) value / 100.0;
@@ -1060,13 +949,77 @@ void parse_wifi_buf (char * buf)
 		// Serial.print("psu: status=CV\n");
 	      else 
 		charger_enable = 1;
-		// Serial.print("psu: status=CC\n");
-	    // if (cmdaddr == 33)
-	    //  Serial.printf("psu: temperature=%d\n", value);  
 	  }
 	}
     }
-  //  psutest = false; 
 }
+
+void parse_vmon_wifi_buf (char * buf, uint8_t address)
+{
+  int       value;
+  float     fvalue;
+  int       matched;
+
+  switch (buf[0])
+    {
+    case 'b' : // balance state (can wiggle when hot)
+      matched = sscanf(buf, "b=%1d\n",  &value);
+      if (matched==1)
+	{
+	  vdata[address].act_balance = value;
+	  vdata[address].received++;
+	}
+      else if ((buf[1] == 'o') && (buf[2] == 'k'))
+	  vdata[address].received++;
+      else
+	vdata[address].protocol_err++;
+      break;
+
+    case 'v' : // read voltage
+      matched = sscanf(buf, "v=%f\n",  &fvalue);
+      if (matched==1)
+	{
+	  vdata[address].volt = fvalue;
+#ifdef MEAS_PERF
+	  vmon_polltime[address].resp = millis();
+	  Serial.printf("vmon %d serial voltage poll took %d milliseconds\n", address+1,
+			vmon_polltime[address].resp - vmon_polltime[address].issue);
+#endif
+	  vdata[address].received++;
+	  vdata[address].mostrecent = rtc.getEpoch();
+	}
+      else 
+	vdata[address].protocol_err++;
+      break;
+      
+    case 'r' : // read resistor temp
+      matched = sscanf(buf, "r=%dC\n",  &value);
+      if (matched==1)
+	{
+	  vdata[address].restemp = value;
+	  vdata[address].received++;
+	}
+      else 
+	vdata[address].protocol_err++;
+      break;
+      
+    case 's' : // read battery temp
+      matched = sscanf(buf, "s=%dC\n",  &value);
+      if (matched==1)
+	{
+	  vdata[address].battemp = value;
+	  vdata[address].received++;
+	}
+      else 
+	vdata[address].protocol_err++;
+      break;
+
+    default:
+      vdata[address].protocol_err++;
+      break;
+    }
+}
+
+
 
 
