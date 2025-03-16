@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-14 18:40:33 john"';
+// my $ver =  'mcc  Time-stamp: "2025-03-16 20:45:45 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -513,7 +513,7 @@ void do_menu_1 (void)  // log menu
 	lcd.write(cursor);
       }
   if (enc_change == -1)
-    if (menu_line >= 1)
+   if (menu_line >= 1)
       {
 	lcd.setCursor(0,menu_line);
 	lcd.print(' ');
@@ -659,22 +659,35 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
       case 'D':
 	// sscanf(in_buf, "%1c%10s", &cmd, &out_buf);  // whatever followed the 'm'
 	// nope, I cannot make sscanf work for a char then a 0 terminated string. So do a manual scan
-	field2 = (in_buf[2] - (uint8_t) 1) & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
-	field3 = (in_buf[2] - (uint8_t) 1) & 0x4; // ascii display column to write to [31..34] +=> 0123 after anding with
+	// field2 is y,  for 0..3 for in_buf2 = 0..3
+	// field3 is x   0 for inbuf2 == 0..3   12 for inbuf[2] == 4..7
+	field2 = in_buf[2]  & 0x3; // ascii display row to write to [31..34] +=> 0123 after anding with 3
+	field3 = (in_buf[2]) & 0x4; // ascii display column to write to [31..34] +=> 0123 after anding with
 	if (field3 != 0 )
-	  field3 = 10;    // support writing to second column.
+	  field3 = 13;    // support writing to second column.
 	
-	//   jump over WD0=12340
+	//   jump over WD0=
 	int i;
-	for (i=4; i < 24; i++)
+	int cmax;
+	if (field3 ==0)
+	  cmax = 13;
+	else
+	  cmax = 7;
+	int l;
+	l=strlen(in_buf);
+	Serial.printf("strlen=%0d\n",l);
+	for (i=4; i < 4+cmax; i++)
 	  {
 	    out_buf[i-4] = in_buf[i];
-	    if (in_buf[i] == 0)
+	    if ((in_buf[i] == 0) || (i>=l))
 	      {
 		out_buf[i-4]= ' ';
-		break;
 	      }
 	  }
+	if (field3==0) 
+	  out_buf[cmax-1]=' ';
+	out_buf[cmax]=0;
+	  
 	snprintf(logmsg, 30, "B%c %s", in_buf[2], out_buf);
 	logger(logmsg);
 	if (! UI_owns_display)

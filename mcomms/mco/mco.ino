@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-16 17:17:15 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-16 20:46:57 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -100,8 +100,6 @@ uint8_t serial_buf_pointer;
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-char return_buf[msgbuflen]; // for responses
-
 const char * version = "MCO 16 Mar 2025 Reva";
 
 Preferences mcoPrefs;  // NVM structure
@@ -139,7 +137,8 @@ typedef struct struct_message {
 } struct_message;
 
 // create the wifi message struct
-struct_message message_data;
+struct_message incoming_data;
+struct_message outgoing_data;
 
 esp_now_peer_info_t peerInfo;
 
@@ -148,11 +147,10 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
 }
 
-struct_message response_data;
 
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-  memcpy(&response_data, incomingData, sizeof(response_data));
+  memcpy(&incoming_data, incomingData, sizeof(incoming_data));
   // Serial.print("received ");
   // Serial.print(len);
   // Serial.print(" bytes from ");  
@@ -163,14 +161,14 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   // from psu?  Record polled readings. more differences at end of mac string
   if ((mac[17] == psu_mac[5]) && (mac[16] == psu_mac[4]) && (mac[15] == psu_mac[3]) &&
       (mac[14] == psu_mac[2]) && (mac[13] == psu_mac[1]) && (mac[12] == psu_mac[0]))
-    parse_psu_wifi_buf(response_data.message);
+    parse_psu_wifi_buf(incoming_data.message);
   // from a vmon?  Record polled readings
   uint8_t i;
   for (i=0; i< vmons; i++)
     {
       if ((mac[17] == vdata[i].mac[5]) && (mac[16] == vdata[i].mac[4]) && (mac[15] == vdata[i].mac[3]) &&
 	  (mac[14] == vdata[i].mac[2]) && (mac[13] == vdata[i].mac[1]) && (mac[12] == vdata[i].mac[0]))
-	parse_vmon_wifi_buf(response_data.message, i);
+	parse_vmon_wifi_buf(incoming_data.message, i);
     }
 }
 
@@ -193,8 +191,8 @@ const uint8_t fram_addr = 0x50;
 // turned on.
 ESP32Time rtc;
 // uint16_t of seconds is 64k seconds is 18 hours. not quite enough for this.  
-uint32_t       last_temp_update_time;         // time last temperature was polled at, in seconds
-const uint16_t temp_update_period = 10; // seconds.
+uint32_t       last_display_update_time;         // time last display update happened , in seconds
+const uint16_t display_update_period = 1; // seconds.
 
 uint32_t last_current_update_time;
 const uint16_t current_update_period = 1; // seconds.
@@ -261,7 +259,7 @@ void setup (void) {
       vdata[i].mostrecent=0;
       vdata[i].received=0;
       vdata[i].sent=0;
-      vdata[i].balance=255;
+      vdata[i].balance=0;
       vdata[i].protocol_err=0;
       vdata[i].act_balance=255;
     }
@@ -300,6 +298,7 @@ void setup (void) {
    serial_buf_pointer = 0;
    //serial2_buf_pointer = 0;
    last_current_update_time = rtc.getEpoch();
+   last_display_update_time = rtc.getEpoch();
 
 
    // at startup, confirm all 4 vmons are present.
@@ -451,8 +450,8 @@ void loop (void)
 	  vmon_polltime[vmon_jj].issue = millis();
 #endif
 	}
-      sprintf(response_data.message, "R%c\n",  vmon_ltr[vmon_ii]);
-      esp_now_send(vdata[vmon_which[vmon_ii]].mac, (uint8_t *) &response_data, sizeof(response_data));
+      sprintf(outgoing_data.message, "R%c\n",  vmon_ltr[vmon_ii]);
+      esp_now_send(vdata[vmon_which[vmon_ii]].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
 
       // record a message sent on that channel
       vdata[vmon_which[vmon_ii]].sent++;
@@ -464,26 +463,53 @@ void loop (void)
 
   
   // poll psu
-
-  
   // update voltage/current/enable from psu if its due . update all about once per second
   if (millis()  > (last_psu_time + psu_period_millis))
     {
       if (! suspend_psu_polling)
 	{
-	  sprintf(response_data.message, ":01r%02d=0,\n", psu_addr[psu_ii]);
+	  sprintf(outgoing_data.message, ":01r%02d=0,\n", psu_addr[psu_ii]);
 	  psu_ii++;
 	  if (psu_ii >= psu_ii_max)
 	    psu_ii = 0;
-	  esp_now_send(psu_mac, (uint8_t *) &response_data, sizeof(response_data));
+	  esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
 	}
       last_psu_time = millis();
     }
 
-  
+  //   update diaplay on mcc
+  if (rtc.getEpoch() > (last_display_update_time + display_update_period))
+    {
+      uint8_t i;
+      for (i=0; i< vmons; i++)    // battery voltages
+	{ 
+	  sprintf(outgoing_data.message, "WD%1d=%1d %2.3fV B%1d", i, i+1, vdata[i].volt, vdata[i].act_balance);
+	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+	}
+      // d4 charger voltage
+      sprintf(outgoing_data.message, "WD4=%2.3fV ", charger_voltage);
+      esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+      
+      //d5, charger current
+      sprintf(outgoing_data.message, "WD5=%2.3fA ", charger_current);
+      esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+      
+      //d6 SOC
+      sprintf(outgoing_data.message, "WD6=SOC=%2d%%",get_SOC(0)/battery_capacity);
+      esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+      
+      //D7 battery temp Vmon1
+      sprintf(outgoing_data.message, "WD7=BT=%2dC", vdata[0].battemp);
+      esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+      last_display_update_time=rtc.getEpoch();
+      
+    }
+      
+	  
+	
 
-
-      // FIXME do logic
+      // FIXME do logic. maxv, setup start, transition from initial to topoff,
+	// transition from topoff to stopped, balance. 
       
 
   
@@ -653,9 +679,10 @@ void parse_buf (char * in_buf)
 	address = (in_buf[2] & 0x03) -1 ;   // convert ascii 1..4 ie 0x31 to 0x34 to 0..3  31->2 34->1  
 	if (address < 0)
 	  address=3;
-	Serial.printf("Vmon %d voltage=%1.3f temp=%1dC resistor=%1dC updated %1d seconds ago msgs s=%1d r=%1d errs=%1d\n",
+	Serial.printf("Vmon %d voltage=%1.3f bt=%1dC rt=%1dC b=%d be=%d updated %1d seconds ago msgs s=%1d r=%1d errs=%1d\n",
 		      address+1, vdata[address].volt,
 		      vdata[address].battemp, vdata[address].restemp,
+		      vdata[address].balance, vdata[address].act_balance, 
 		      rtc.getEpoch() - vdata[address].mostrecent,
 		      vdata[address].sent, vdata[address].received, vdata[address].protocol_err); 
 	break;
@@ -718,8 +745,8 @@ void parse_buf (char * in_buf)
   case 'W':
     switch (in_buf[1]) {
     case 'd':
-      memcpy(&response_data.message, in_buf, strlen(in_buf));
-      esp_now_send(mcc_mac, (uint8_t *) &response_data, sizeof(response_data));
+      memcpy(&incoming_data.message, in_buf, strlen(in_buf));
+      esp_now_send(mcc_mac, (uint8_t *) &incoming_data, sizeof(incoming_data));
       break;
       
     case  'c' :
@@ -850,7 +877,7 @@ void set_psu_v(float volt)
   char out_buf[20];
   suspend_psu_polling=true;
   delay(100);
-  esp_now_send(psu_mac, (uint8_t *) &response_data, sizeof(response_data));
+  esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
   suspend_psu_polling=false;
   delay(100);
 }
@@ -860,8 +887,8 @@ void set_psu_i(float current)
   char out_buf[20];
   suspend_psu_polling=true;
   delay(100);
-  sprintf(response_data.message, ":01w11=%05d,\n", (int ) 1000.0 * current);
-  esp_now_send(psu_mac, (uint8_t *) &response_data, sizeof(response_data));
+  sprintf(outgoing_data.message, ":01w11=%05d,\n", (int ) 1000.0 * current);
+  esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
   suspend_psu_polling=false;
   delay(100);
 }
@@ -871,8 +898,8 @@ void set_psu_e(int value)
   char out_buf[20];
   suspend_psu_polling=true;
   delay(100);
-  sprintf(response_data.message, ":01w12=%1d,\n",  value);
-  esp_now_send(psu_mac, (uint8_t *) &response_data, sizeof(response_data));
+  sprintf(outgoing_data.message, ":01w12=%1d,\n",  value);
+  esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
   suspend_psu_polling=false;
   delay(100);
 }
@@ -912,7 +939,7 @@ void do_serial_if_ready (void)
 	serial_buf[serial_buf_pointer] = (uint8_t) 0;  // write string terminator to buffer
 	if (serial_buf_pointer >= 1) {                 // at least a command letter
 	  parse_buf(serial_buf);      // parse the buffer if at least one char in it.
-	  Serial.print(return_buf);
+	  // Serial.print(return_buf);
 	}
 	serial_buf_pointer = 0;
       }
