@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-17 21:00:51 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-18 08:45:52 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -94,7 +94,7 @@ int32_t soc;
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 17 Mar 2025 Reva";
+const char * version = "MCO 18 Mar 2025 Reva";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -113,6 +113,7 @@ float   max_battery_voltage;
 float   batt_balance_voltage;
 float   batt_balance_tol_voltage;
 int32_t  battery_capacity;  //mA Seconds
+float  fbattery_capacity;  //mA Seconds
 int32_t  beep_SOC;
 float   adc_gain;
 float   adc_offset;
@@ -198,10 +199,10 @@ Adafruit_FRAM_I2C fram     = Adafruit_FRAM_I2C();
 // beeper
 // setting PWM properties
 const int freq_beep = 2000;
+const int beep_res   = 7;
+const int beep_50_pwm = 128;
 const int freq_soc_50 = 168;
 const int resolution = 8;
-const uint8_t beep_pwm_channel = 2;
-const uint8_t soc_pwm_channel = 1;
 bool last_beep_state=0;
 
 
@@ -281,14 +282,14 @@ void setup (void) {
    pinMode(soc_pps_pin, OUTPUT);
 
    digitalWrite(fram_wp_pin,  HIGH);
-
-
+ 
    // buzzer allocate
-   ledcAttachChannel(buz_en_pin, freq_beep, resolution, beep_pwm_channel);
+   ledcAttach(buz_en_pin, freq_beep, beep_res);
+   ledcWriteTone(buz_en_pin, 0);
    // soc allocate
-   ledcAttachChannel(soc_pps_pin, freq_soc_50, resolution, soc_pwm_channel);
+   ledcAttach(soc_pps_pin, freq_soc_50, resolution);
 
-   ledcWrite(buz_en_pin, 0);     // beeper off
+   //   ledcWrite(buz_en_pin, 0);     // beeper off
    ledcWrite(soc_pps_pin, 128);  // set soc gauge to 50%
    
 
@@ -335,13 +336,6 @@ void setup (void) {
      }       
    soc = get_SOC(0);
 
-   // init to something non-beepy
-   //   write_SOC(0, 3600000 * 50);
-   //   write_SOC(1, 3600000 * 50);
-   //   write_SOC(2, 3600000 * 50);
-   //   soc = get_SOC(0);
-   
-   
   Serial.println("init ADS1115");
    // init adc
    if(!adc.init()){
@@ -418,14 +412,16 @@ void loop (void)
     {
     if (last_beep_state)
 	{
-	  ledcWrite(buz_en_pin, 0);     // beeper off
+	  ledcWriteTone(buz_en_pin, 0); 
+	  // ledcWrite(buz_en_pin, 0);     // beeper off
 	  last_beep_state = false;
 	}
       else
-	{
+	{ //  FIXME, input should be inverted
 	  if (digitalRead(charger_connected_pin) && (soc < beep_SOC))
 	    {
-	      ledcWrite(buz_en_pin, 128);     // beeper on
+	      ledcWriteTone(buz_en_pin, freq_beep);
+	      //ledcWrite(buz_en_pin, beep_50_pwm);     // beeper on
 	    }
 	  last_beep_state = true;
 	}
@@ -447,8 +443,8 @@ void loop (void)
       write_SOC(0, soc);
       write_SOC(1, soc);
       write_SOC(2, soc);
-      int soc_f =     336 * ( (float) soc / (float) battery_capacity);     
-      ledcAttachChannel(soc_pps_pin, soc_f, resolution, soc_pwm_channel);
+      int soc_f =     336.0 * (float)soc /  fbattery_capacity;
+      ledcChangeFrequency(soc_pps_pin, soc_f, 8);
       last_current_update_time = rtc.getEpoch();
     }
   
@@ -616,7 +612,7 @@ void load_operational_params(void)
    batt_balance_tol_voltage = mcoPrefs.getFloat("bbt"); // battery balance tolerance
    beep_SOC = mcoPrefs.getLong("bsoc");                 // beep SOC, 10%
    battery_capacity = mcoPrefs.getLong("bcap");         // battery capacity in mAS  100AH = 360e6 maS 
-
+   fbattery_capacity = (float) battery_capacity;
    // All done. Last run state (or the factory default) is now restored.
    mcoPrefs.end();                                      // Close our preferences namespace.
 }
