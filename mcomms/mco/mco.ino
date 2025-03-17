@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-16 20:46:57 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-17 21:00:51 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -20,14 +20,7 @@
    It beeps on empty when battery empty && not_charging
    it records SOC in local fram. multiple copies most likely.
 
-   so have to get up in some order
-   comms to vmons
-   fram driver
-   adc
    beeper
-   soc meter driver 
-   NVM
-   wifi 
    then the core logic.
 */
 
@@ -90,6 +83,7 @@ const uint8_t longest_record = 24;  //   worst is display comand WD1=12345678901
 const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 char serial_buf[record_size];
 uint8_t serial_buf_pointer;
+int32_t soc;
 
 // serial2 is used for communicating with vmons
 //const uint8_t longest_record2 = 24;  //   worst is display comand WD1=12345678901234567890
@@ -100,7 +94,7 @@ uint8_t serial_buf_pointer;
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 16 Mar 2025 Reva";
+const char * version = "MCO 17 Mar 2025 Reva";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -206,7 +200,7 @@ Adafruit_FRAM_I2C fram     = Adafruit_FRAM_I2C();
 const int freq_beep = 2000;
 const int freq_soc_50 = 168;
 const int resolution = 8;
-const uint8_t beep_pwm_channel = 0;
+const uint8_t beep_pwm_channel = 2;
 const uint8_t soc_pwm_channel = 1;
 bool last_beep_state=0;
 
@@ -222,6 +216,10 @@ uint32_t last_vmon_time=0;
 const uint32_t vmon_period_millis = 2000 / vmon_ii_max ; // roughly 1s for testing 
 uint8_t vmon_which[] ={  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3 };
 uint8_t vmon_ltr[]   ={ 'v','v','v','v','r','r','r','r','v','v','v','v','s','s','s','s','v','v','v','v','b','b','b','b'};
+
+uint32_t last_beep_time ;
+const uint32_t beep_on_period = 300;
+
 
 #ifdef MEAS_PERF
 // vmon polling performance work
@@ -282,7 +280,7 @@ void setup (void) {
    pinMode(charger_connected_pin, INPUT);
    pinMode(soc_pps_pin, OUTPUT);
 
-      digitalWrite(fram_wp_pin,  HIGH);
+   digitalWrite(fram_wp_pin,  HIGH);
 
 
    // buzzer allocate
@@ -309,6 +307,9 @@ void setup (void) {
      {
        Serial.println("FRAM not connected!");
      }
+
+
+
    
    // check soc. stored in fram 3 times. choose the majority. 
    if (get_SOC(0) == get_SOC(1))
@@ -332,7 +333,15 @@ void setup (void) {
        write_SOC(1, 3600000 * 50);    // initilize to 50% as I have no idea
        write_SOC(2, 3600000 * 50);    // initilize to 50% as I have no idea
      }       
+   soc = get_SOC(0);
 
+   // init to something non-beepy
+   //   write_SOC(0, 3600000 * 50);
+   //   write_SOC(1, 3600000 * 50);
+   //   write_SOC(2, 3600000 * 50);
+   //   soc = get_SOC(0);
+   
+   
   Serial.println("init ADS1115");
    // init adc
    if(!adc.init()){
@@ -379,7 +388,7 @@ void setup (void) {
     if (esp_now_add_peer(&peerInfo) != ESP_OK){
       Serial.println("Failed to add peer");
     }
-    // Register peer cmt
+    // Register peer cmt   // hmmm, with this registered i could not talk to vmon4. 
     //memcpy(peerInfo.peer_addr, cmt_mac, 6);
     //if (esp_now_add_peer(&peerInfo) != ESP_OK){
     //  Serial.println("Failed to add peer");
@@ -405,25 +414,9 @@ void loop (void)
   do_serial_if_ready();
   // do_serial2_if_ready();
 
-  
-  // update current and SOC state if its due 
-  if (rtc.getEpoch() > (last_current_update_time + current_update_period))
+  if (millis() > last_beep_time + beep_on_period)
     {
-#ifndef NOADC
-      while(adc.isBusy()) {
-	Serial.println("adc is busy?");
-	delay(1000);
-      }
-      battery_current = adc_gain * (adc.getResult_V() + adc_offset);
-      //        in mAS                  in A              to mA, period is 2x current_update_period  
-      int32_t soc = get_SOC(0) + (int32_t) (battery_current * 2000.0 * current_update_period);
-      write_SOC(0, soc);
-      write_SOC(1, soc);
-      write_SOC(2, soc);
-      int soc_f =     336 * ( (float) soc / (float) battery_capacity);     
-      ledcAttachChannel(soc_pps_pin, soc_f, resolution, soc_pwm_channel);
-      
-      if (last_beep_state)
+    if (last_beep_state)
 	{
 	  ledcWrite(buz_en_pin, 0);     // beeper off
 	  last_beep_state = false;
@@ -431,12 +424,32 @@ void loop (void)
       else
 	{
 	  if (digitalRead(charger_connected_pin) && (soc < beep_SOC))
-	    ledcWrite(buz_en_pin, 128);     // beeper on
+	    {
+	      ledcWrite(buz_en_pin, 128);     // beeper on
+	    }
 	  last_beep_state = true;
 	}
-#endif
+    last_beep_time = millis();
+    }
+
+
+  
+  // update current and SOC state if its due 
+  if (rtc.getEpoch() > (last_current_update_time + current_update_period))
+    {
+      while(adc.isBusy()) {
+	Serial.println("adc is busy?");
+	delay(1000);
+      }
+      battery_current = adc_gain * (adc.getResult_V() + adc_offset);
+      //        in mAS                  in A              to mA, period is 2x current_update_period  
+      soc = get_SOC(0) + (int32_t) (battery_current * 2000.0 * current_update_period);
+      write_SOC(0, soc);
+      write_SOC(1, soc);
+      write_SOC(2, soc);
+      int soc_f =     336 * ( (float) soc / (float) battery_capacity);     
+      ledcAttachChannel(soc_pps_pin, soc_f, resolution, soc_pwm_channel);
       last_current_update_time = rtc.getEpoch();
-      
     }
   
   // update voltage from vmons if its due . update all about once per second
@@ -495,9 +508,12 @@ void loop (void)
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
       
       //d6 SOC
-      sprintf(outgoing_data.message, "WD6=SOC=%2d%%",get_SOC(0)/battery_capacity);
-      esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-      
+      if (battery_capacity > 0) 
+	{
+	  sprintf(outgoing_data.message, "WD6=SOC=%2d%%",get_SOC(0)/battery_capacity);
+	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+	}
+  
       //D7 battery temp Vmon1
       sprintf(outgoing_data.message, "WD7=BT=%2dC", vdata[0].battemp);
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
@@ -566,6 +582,10 @@ void reinit_NVM (void)
 }
 
 
+// regarding offsets..
+// read the adc, add adv_offset, multiply the sum by the gain to get the real reading.
+//   same for a voltage reading from the psu.
+//   the inverse for setting the psu voltage.
 void load_operational_params(void)
 {
 
@@ -611,7 +631,7 @@ void parse_buf (char * in_buf)
   //          i battery current 
   //          v[1234] vmon state
   //          t current time
-  //          c charger voltage, current, enable
+  //          c scaled charger voltage, current, enable
   //          s SOC
   //          M Show macs
   //          V=version
@@ -620,7 +640,7 @@ void parse_buf (char * in_buf)
   //          E BEep below this 
   //          T=topoff voltage, current, final current
   //          G[VI] adc gain   current=local adc voltage=DPM8624
-  //          P[VI] adc offset current=local adc voltage=DPM8624
+  //          P[VI] psu offset voltage =local adc voltage=DPM8624
   //          S     SOC total capacity in mA.S i guess
   // Wf Field,
   //    where Field could be
@@ -874,34 +894,36 @@ void parse_buf (char * in_buf)
 
 void set_psu_v(float volt)
 {
-  char out_buf[20];
   suspend_psu_polling=true;
-  delay(100);
+  delay(30);
+  // implement inverse psu gain trim based on observed accuracy at 50V
+  // ie set to something that should produce 50V when asked to set to 50V
+  sprintf(outgoing_data.message, ":01w10=%04d,\n", (int32_t) (100.0 * ((volt/psu_gain) -psu_offset)));
+  // Serial.printf(" volt=%f  made %s g=%f o=%f\n", volt, outgoing_data.message, psu_gain, psu_offset);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
   suspend_psu_polling=false;
-  delay(100);
+  delay(30);
 }
 
 void set_psu_i(float current)
 {
-  char out_buf[20];
   suspend_psu_polling=true;
-  delay(100);
+  delay(30);
   sprintf(outgoing_data.message, ":01w11=%05d,\n", (int ) 1000.0 * current);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
   suspend_psu_polling=false;
-  delay(100);
+  delay(30);
 }
 
 void set_psu_e(int value)
 {
   char out_buf[20];
   suspend_psu_polling=true;
-  delay(100);
+  delay(30);
   sprintf(outgoing_data.message, ":01w12=%1d,\n",  value);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
   suspend_psu_polling=false;
-  delay(100);
+  delay(30);
 }
 
 uint32_t get_SOC (uint16_t address)
@@ -966,7 +988,7 @@ void parse_psu_wifi_buf (char * buf)
 	  if (matched==2) {
 	    if (cmdaddr == 30)
 	      //  Serial.printf("psu: meas_voltage=%d.%02dV\n", value/100, value % 100);  
-	      charger_voltage = (float) value / 100.0;
+	      charger_voltage = psu_gain * (psu_offset+ (float) (value  / 100.0 ))  ;
 	    else if (cmdaddr == 31)
 	      //	      Serial.printf("psu: meas_current=%d.%03dA\n", value/1000, value % 1000);  
 	      charger_current = (float) value / 1000.0;
