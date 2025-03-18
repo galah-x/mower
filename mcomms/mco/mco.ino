@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-18 10:49:31 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-18 19:28:46 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -32,6 +32,7 @@
 // test vmon2 MAC (ME) is 5c013b660c9c   vmon # 2
 // test vmon3 MAC (ME) is 5c013b6d1a48   vmon # 3
 // test vmon4 MAC (ME) is 5c013b6cea48   vmon # 4
+// test imon           is b8d61a5788d0
 
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
@@ -96,7 +97,7 @@ int32_t soc;
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 18 Mar 2025 Reva";
+const char * version = "MCO 18 Mar 2025 Revb";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -104,6 +105,7 @@ Preferences mcoPrefs;  // NVM structure
 uint8_t psu_mac[6];
 uint8_t mcc_mac[6];
 uint8_t cmt_mac[6];
+uint8_t imonmac[6];
 
 float   initial_charge_current;
 float   initial_charge_voltage;
@@ -159,14 +161,20 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   if ((mac[17] == psu_mac[5]) && (mac[16] == psu_mac[4]) && (mac[15] == psu_mac[3]) &&
       (mac[14] == psu_mac[2]) && (mac[13] == psu_mac[1]) && (mac[12] == psu_mac[0]))
     parse_psu_wifi_buf(incoming_data.message);
+  // from imon?  Record unpolled readings
+  else if ((mac[12] == imonmac[0]) && (mac[13] == imonmac[1]) && (mac[14] == imonmac[2]) &&
+      (mac[15] == imonmac[3]) && (mac[16] == imonmac[4]) && (mac[17] == imonmac[5]))
+    parse_imon_wifi_buf(incoming_data.message);
   // from a vmon?  Record polled readings
-  uint8_t i;
-  for (i=0; i< vmons; i++)
-    {
-      if ((mac[17] == vdata[i].mac[5]) && (mac[16] == vdata[i].mac[4]) && (mac[15] == vdata[i].mac[3]) &&
-	  (mac[14] == vdata[i].mac[2]) && (mac[13] == vdata[i].mac[1]) && (mac[12] == vdata[i].mac[0]))
-	parse_vmon_wifi_buf(incoming_data.message, i);
-    }
+  else {
+    uint8_t i;
+    for (i=0; i< vmons; i++)
+      {
+	if ((mac[17] == vdata[i].mac[5]) && (mac[16] == vdata[i].mac[4]) && (mac[15] == vdata[i].mac[3]) &&
+	    (mac[14] == vdata[i].mac[2]) && (mac[13] == vdata[i].mac[1]) && (mac[12] == vdata[i].mac[0]))
+	  parse_vmon_wifi_buf(incoming_data.message, i);
+      }
+  }
 }
 
 /* IOs  definitions */
@@ -428,10 +436,9 @@ void loop (void)
 	}
       else
 	{
-	  Serial.printf("ccpin=%d, notccpin=%d, soc<beept=%d\n",
-			digitalRead(charger_connected_pin), !digitalRead(charger_connected_pin),
-			(soc < beep_SOC));
-	  //  FIXME, input should be inverted
+	  // Serial.printf("ccpin=%d, notccpin=%d, soc<beept=%d\n",
+	  // 		digitalRead(charger_connected_pin), !digitalRead(charger_connected_pin),
+	  // 		(soc < beep_SOC));
 	  if (!digitalRead(charger_connected_pin) && (soc < beep_SOC))
 	    {
 #ifdef DC_BEEPER
@@ -455,8 +462,6 @@ void loop (void)
 	Serial.println("adc is busy?");
 	delay(1000);
       }
-      battery_current = adc_gain * (adc.getResult_V() + adc_offset);
-      //        in mAS                  in A              to mA, period is 2x current_update_period  
       soc = get_SOC(0) + (int32_t) (battery_current * 2000.0 * current_update_period);
       write_SOC(0, soc);
       write_SOC(1, soc);
@@ -550,9 +555,10 @@ const uint8_t default_mcc_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0xf4, 0xfc };
 const uint8_t default_psu_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0xe2, 0xd0 };
 const uint8_t default_cmt_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0x99, 0x38 };
 const uint8_t default_v1_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0x7d, 0x14 };
-const uint8_t default_v2_mac[]  = { 0x5c, 0x01, 0x3b, 0x66, 0x0c, 0x9c };  // random to check code for now
-const uint8_t default_v3_mac[]  = { 0x5c, 0x01, 0x3b, 0x6d, 0x1a, 0x48 };  // random to check code for now
-const uint8_t default_v4_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0xea, 0x48 };  // random to check code for now
+const uint8_t default_v2_mac[]  = { 0x5c, 0x01, 0x3b, 0x66, 0x0c, 0x9c };
+const uint8_t default_v3_mac[]  = { 0x5c, 0x01, 0x3b, 0x6d, 0x1a, 0x48 };
+const uint8_t default_v4_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0xea, 0x48 };
+const uint8_t default_imon_mac[]  = { 0xb8, 0xd6, 0x1a, 0x57, 0x88, 0xd0 };
 
 void reinit_NVM (void)
 {
@@ -573,6 +579,7 @@ void reinit_NVM (void)
   mcoPrefs.putBytes("v2mac",  default_v2_mac, 6);  // mac address of vmon # 2
   mcoPrefs.putBytes("v3mac",  default_v3_mac, 6);  // mac address of vmon # 3
   mcoPrefs.putBytes("v4mac",  default_v4_mac, 6);  // mac address of vmon # 4
+  mcoPrefs.putBytes("imonmac",  default_imon_mac, 6);  // mac address of imon
   mcoPrefs.putFloat("adco", 0.0);            // current adc offset term
   mcoPrefs.putFloat("adcg", 1.0);            // current adc gain term
   mcoPrefs.putFloat("psug",  1.0 );          // cal term from local voltage to psu 
@@ -611,10 +618,11 @@ void load_operational_params(void)
    mcoPrefs.getBytes("psumac", psu_mac, 6);             // load power supply mac
    mcoPrefs.getBytes("mccmac", mcc_mac, 6);             // load mco/cmt supply mac
    mcoPrefs.getBytes("cmtmac", cmt_mac, 6);             // load mco/cmt supply mac
-   mcoPrefs.getBytes("v1mac", vdata[0].mac, 6);               // load vmon 1 mac
-   mcoPrefs.getBytes("v2mac", vdata[1].mac, 6);               // load vmon  mac
-   mcoPrefs.getBytes("v3mac", vdata[2].mac, 6);               // load vmon  mac
-   mcoPrefs.getBytes("v4mac", vdata[3].mac, 6);               // load vmon  mac
+   mcoPrefs.getBytes("v1mac", vdata[0].mac, 6);         // load vmon 1 mac
+   mcoPrefs.getBytes("v2mac", vdata[1].mac, 6);         // load vmon  mac
+   mcoPrefs.getBytes("v3mac", vdata[2].mac, 6);         // load vmon  mac
+   mcoPrefs.getBytes("v4mac", vdata[3].mac, 6);         // load vmon  mac
+   mcoPrefs.getBytes("imonmac", imonmac, 6);              // load imon  mac
    adc_offset = mcoPrefs.getFloat("adco");              // current adc offset term
    adc_gain = mcoPrefs.getFloat("adcg");                // current adc gain term
    psu_offset = mcoPrefs.getFloat("psuo");              // cal term from local voltage to psu 
@@ -741,6 +749,10 @@ void parse_buf (char * in_buf)
 		      vdata[1].mac[0], vdata[1].mac[1], vdata[1].mac[2], vdata[1].mac[3], vdata[1].mac[4], vdata[1].mac[5], 
 		      vdata[2].mac[0], vdata[2].mac[1], vdata[2].mac[2], vdata[2].mac[3], vdata[2].mac[4], vdata[2].mac[5], 
 		      vdata[3].mac[0], vdata[3].mac[1], vdata[3].mac[2], vdata[3].mac[3], vdata[3].mac[4], vdata[3].mac[5]);
+	Serial.printf("IMON_MAC=%02x%02x%02x%02x%02x%02x\n",
+		      imonmac[0],imonmac[1],imonmac[2],imonmac[3],imonmac[4],imonmac[5]);
+	
+		      
 	break;
       case 'I' :
 	Serial.printf("Initial charge voltage=%2.2fV current=%2.3fA\n",
@@ -827,6 +839,8 @@ void parse_buf (char * in_buf)
 	mcoPrefs.putBytes("mccmac", mvalue, 6);
       else if (field2 == 'C') 
 	mcoPrefs.putBytes("cmtmac", mvalue, 6);
+      else if (field2 == 'I') 
+	mcoPrefs.putBytes("imonmac", mvalue, 6);
       match =  sscanf(in_buf, "%c%c%c%c=%2x%2x%2x%2x%2x%2x", &cmd, &field, &field2, &field3,
 		      &mvalue[0],&mvalue[1],&mvalue[2],&mvalue[3],&mvalue[4],&mvalue[5]);
       if (field2 == 'V')
@@ -1080,6 +1094,18 @@ void parse_vmon_wifi_buf (char * buf, uint8_t address)
     default:
       vdata[address].protocol_err++;
       break;
+    }
+}
+void parse_imon_wifi_buf (char * buf)
+{
+  float     fvalue;
+  int       matched;
+
+  matched = sscanf(buf, "I=%f",  &fvalue);
+  if (matched==1)
+    {
+      battery_current = fvalue;
+      Serial.printf("got %f from %s\n", battery_current, buf);
     }
 }
 
