@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-18 08:45:52 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-18 10:49:31 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -47,6 +47,8 @@
 
 // #define DEBUG
 // #define MEAS_PERF
+
+#define DC_BEEPER
 
 // for preferences
 #define RW_MODE false
@@ -284,8 +286,12 @@ void setup (void) {
    digitalWrite(fram_wp_pin,  HIGH);
  
    // buzzer allocate
+#ifdef DC_BEEPER
+   digitalWrite(buz_en_pin, 0);
+#else
    ledcAttach(buz_en_pin, freq_beep, beep_res);
    ledcWriteTone(buz_en_pin, 0);
+#endif
    // soc allocate
    ledcAttach(soc_pps_pin, freq_soc_50, resolution);
 
@@ -412,16 +418,28 @@ void loop (void)
     {
     if (last_beep_state)
 	{
+#ifdef DC_BEEPER
+	  digitalWrite(buz_en_pin, 0);
+#else  
 	  ledcWriteTone(buz_en_pin, 0); 
+#endif
 	  // ledcWrite(buz_en_pin, 0);     // beeper off
 	  last_beep_state = false;
 	}
       else
-	{ //  FIXME, input should be inverted
-	  if (digitalRead(charger_connected_pin) && (soc < beep_SOC))
+	{
+	  Serial.printf("ccpin=%d, notccpin=%d, soc<beept=%d\n",
+			digitalRead(charger_connected_pin), !digitalRead(charger_connected_pin),
+			(soc < beep_SOC));
+	  //  FIXME, input should be inverted
+	  if (!digitalRead(charger_connected_pin) && (soc < beep_SOC))
 	    {
+#ifdef DC_BEEPER
+	      Serial.printf("setting beeper on\n");
+	      digitalWrite(buz_en_pin, 1);
+#else
 	      ledcWriteTone(buz_en_pin, freq_beep);
-	      //ledcWrite(buz_en_pin, beep_50_pwm);     // beeper on
+#endif
 	    }
 	  last_beep_state = true;
 	}
