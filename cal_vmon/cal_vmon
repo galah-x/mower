@@ -1,0 +1,244 @@
+#!/usr/bin/perl -w
+
+# this script is to auto test and cal the 4 vmons.
+
+# testing will check
+# 1. temp read from battery temp sensors
+# 2. temp read from resistor temp sensor
+# 3. voltage read
+# 4. turn on balance and check board current
+# 5. check res temp after on for a particular while.
+
+# test environment
+# access vmons via mcc which is acccessed via a serial port
+# access board voltage via a vichy mm. Its connected via wifi so need a remote shell via wren
+# access board current as prior line.
+
+# logging
+
+use strict;
+use  Getopt::Long;
+use POSIX qw(strftime);
+use POSIX qw(:termios_h);
+use IO::Handle;
+use Fcntl qw( O_RDONLY O_RDWR O_NOCTTY);
+
+my $vcmd = "ssh john\@wren /home/john/vichytest | awk '{print \$1}'";
+my $icmd = "ssh john\@wren /home/john/vichytest2 | awk '{print \$1}'";
+my $mcoport = "/dev/ttyUSB2";
+my $logfile = "cal.log";
+my $baud = 115200;
+my $board = 1;
+my $lh;
+
+&GetOptions (
+	     'vcmd=s',    \$vcmd,
+	     'icmd=s',    \$icmd,
+	     'mcoport=s',    \$mcoport,
+	     'baud=s',    \$baud,
+	     'board=n',   \$board
+	    );
+
+#printf ("%f %f\n", &get_v(), &get_i());
+(my $handle, my $success) = &openserial($mcoport,$baud);
+print "open serial success=$success\n" if ($success !=1);
+
+&open_logfile;
+# printb(sprintf("board %1d V=%f\n", $board, &read_v($board))); 
+
+for(my $i=1; $i<=4; $i++)
+  {
+    chk_bd($i);
+  }
+
+
+sub chk_bd
+{
+  my $bd = shift;
+  my $i = &get_i;
+  my $v = &get_v;
+  my $bv = &read_v($bd);
+  my $bt = &read_bt($bd);
+  my $rt = &read_rt($bd);
+  printf "board %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
+    $bd, $v, $bv, $i, $bt, $rt, $v-$bv;
+
+  &set_b($bd, 1);
+  sleep 10;
+  my $v2 = &get_v;
+  my $i2 = &get_i;
+  my $bv2 = &read_v($bd);
+  my $bt2 = &read_bt($bd);
+  my $rt2 = &read_rt($bd);
+  printf "en=1  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d deltai=%3.1f dv=%2.3f\n",
+    $bd, $v2, $bv2, $i2, $bt2, $rt2, $i2 - $i, $v2-$bv2;
+
+  &set_b($bd, 0);
+  sleep 10;
+  my $v3 = &get_v;
+  my $i3 = &get_i;
+  my $bv3 = &read_v($bd);
+  my $bt3 = &read_bt($bd);
+  my $rt3 = &read_rt($bd);
+  printf "en=0  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
+    $bd, $v3, $bv3, $i3, $bt3, $rt3, $v3-$bv3;
+  printf "difference between deltav with balance on and deltav bal off averages %1.4f\n",
+    ($v + $v3 - $bv - $bv3) /2  - ($v2 - $bv2); 
+}
+
+  
+  sub printb
+{ my $string = shift;
+  print $string;
+  print $lh $string;
+}
+
+
+sub set_b # setbalance
+{
+  my $board = shift;
+  my $bal = shift;
+  printf $handle ("Wb%d=%d\n", $board, $bal);
+  my $l  = &get_serial_line($handle);
+  $l =~ /oltage=([\d\.]+)/;
+  return $1;
+}
+sub read_v
+{
+  my $board = shift;
+  printf $handle ("Rv%d\n", $board);
+  my $l  = &get_serial_line($handle);
+  $l =~ /oltage=([\d\.]+)/;
+  return $1;
+}
+sub read_rt
+{
+  my $board = shift;
+  printf $handle ("Rv%d\n", $board);
+  my $l  = &get_serial_line($handle);
+  #print "rt $l\n";
+  $l =~ /\srt=([\d\.]+)C/;
+  return $1;
+}
+sub read_bt
+{
+  my $board = shift;
+  printf $handle ("Rv%d\n", $board);
+  my $l  = &get_serial_line($handle);
+  #print "bt $l\n";
+  $l =~ /bt=([\d\.]+)C/;
+  return $1;
+}
+
+sub get_v ()
+{ my $v = `$vcmd`;
+  return $v;
+}
+sub get_i ()
+{ my $i = 10 * `$icmd`;
+  return $i;
+}
+
+sub openserial { 
+    my $port = shift;
+    my $baud = shift;
+
+    # Used to control serial line discipline et cetera
+    my $term;
+    my $cflag=0;
+    # Files etc
+    my ($fd_tty);
+    my $handle;
+    my $success = sysopen($handle, $port, O_RDWR | O_NOCTTY );
+    # See perlfaq8 for details on how the following ioctl's are done 
+    $handle->autoflush(1);
+    $fd_tty = fileno($handle);
+    $term = POSIX::Termios->new();
+    $term->getattr($fd_tty) || die("Failed getattr on tty_in: $!");
+
+   # Set baudrate
+    #    $cflag |= &B38400;
+    $cflag |= (CS8 | CSTOPB ); # 2 stop bits
+    $term->setlflag(0); # Have to have no echo for this to work
+    $term->setiflag( 0);
+    $term->setoflag( 0);
+    $term->setcflag($cflag |  CLOCAL | CREAD );  # local disables modem control
+    $term->setcc(VMIN, 50); 
+    $term->setcc(VTIME, 5); 
+
+    $term->setospeed(&mapbaud($baud));
+    $term->setispeed(&mapbaud($baud));
+    #    printf "getospeed returns %d\n", $term->getospeed;
+    $term->setattr($fd_tty, TCSANOW) || die "Failed setattr tty in : $!";
+    return ($handle,$success);
+}
+
+
+sub get_serial_line
+{
+  my $handle = shift;
+  return <$handle>;
+}
+
+
+sub mapbaud {
+    my $ret = 13; # 9600 default 
+    my $baud = shift;
+    if ($baud == 1200) {
+        $ret = 9;
+    } elsif ($baud == 1800) {
+        $ret = 10;
+    } elsif ($baud == 2400) {
+        $ret = 11;
+    } elsif ($baud == 4800) {
+        $ret = 12;
+    } elsif ($baud == 9600) {
+        $ret = 13;
+    } elsif ($baud == 19200) {
+        $ret = 14;
+    } elsif ($baud == 38400) {
+        $ret = 15;
+   } elsif ($baud == 57600) {
+        $ret = 4097;
+    } elsif ($baud == 115200) {
+        $ret = 4098;
+    } elsif ($baud == 230400) {
+        $ret = 4099;
+    } elsif ($baud == 460800) {
+        $ret = 4100;
+    } elsif ($baud == 500000) {
+        $ret = 4101;
+    } elsif ($baud == 576000) {
+        $ret = 4102;
+    } elsif ($baud == 921600) {
+        $ret = 4103;
+    } elsif ($baud == 1000000) {
+        $ret = 4104;
+    } elsif ($baud == 1152000) {
+        $ret = 4105;
+    } elsif ($baud == 2000000) {
+        $ret = 4107;
+    } elsif ($baud == 2500000) {
+       $ret = 4109;
+    } elsif ($baud == 3500000) {
+        $ret = 4110;
+    } elsif ($baud == 4000000) {
+        $ret = 4111;
+    }
+    return $ret;
+}
+ 
+
+sub  open_logfile { # for append
+    open($lh, ">>", $logfile) or die "Could not open logfile $logfile for append $!";
+    $lh->autoflush(1);
+}
+
+
+sub closeserial {
+  sysclose $_[0];
+}
+
+
+
+

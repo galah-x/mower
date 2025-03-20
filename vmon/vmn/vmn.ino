@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-16 10:48:14 john"';
+// my $ver =  'vmn   Time-stamp: "2025-03-20 19:03:16 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -50,7 +50,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "VMON WIFI 16 Mar 2025 Reva";
+const char * version = "VMON WIFI 20 Mar 2025 Reva";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -326,8 +326,8 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   //         M Macs
   //         O adc offset
   //         V version
-  //         b current balance actual setting
-  //         c current balance requested setting
+  //         b current balance requested setting
+  //         c current balance actual setting
   //         v current voltage
   //         r current resistor temperature
   //         s current battery temperature
@@ -425,7 +425,8 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
     {
       // first case, WA=3     decimal integer up to ~5 sig figures
       match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
-      
+      //  if (match == 3)
+      // Serial.printf("bal request %d\n", value);
       switch (field) {
       case 'b' :   // balance
 	if (value == 0)
@@ -572,9 +573,15 @@ void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
 	{
 	case 'b':
 	  if (in_buf[3] == '0')
-	    balance = false;
+	    {
+	      balance = false;
+	      digitalWrite(balance_en_pin, 0);
+	    }	      
 	  else
-	    balance=true;
+	    {
+	      balance=true;
+	      digitalWrite(balance_en_pin, 1);
+	    }
 	  snprintf(out_buf, out_buf_len, "bok\n");
 	  break;
 	}

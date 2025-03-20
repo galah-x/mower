@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-18 19:28:46 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-20 18:48:48 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -73,6 +73,20 @@ struct vsdata
 
 int32_t s2_comms_errors = 0;
 
+const char cmdlen = 20;
+const char cmdqlen = 1;
+
+struct vmon_pollq
+{
+  char     cmd[cmdlen] ;    // command string
+  uint8_t  cmd_avail;       // is a command available
+  uint8_t  qclaimed;        // has someone claimed a queue spot
+  uint8_t  board;           // which board is the cmd for. for msg counting. 0..3
+  uint8_t  spare;           // align it to 32b
+} vq[cmdqlen];              // instantiate a q
+
+
+
 // #define NOADC
 
 #ifndef NOADC
@@ -97,7 +111,7 @@ int32_t soc;
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 18 Mar 2025 Revb";
+const char * version = "MCO 20 Mar 2025 Reva";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -224,7 +238,11 @@ uint8_t vmon_ii =0;
 const uint8_t vmon_ii_max =24;
 uint32_t last_vmon_time=0;
 //const uint32_t vmon_period_millis = 1000 / vmon_ii_max ; // roughly 40 ms 
-const uint32_t vmon_period_millis = 2000 / vmon_ii_max ; // roughly 1s for testing 
+const uint32_t vmon_period_millis = 2000 / vmon_ii_max ; // roughly 1s for testing
+// v is a voltage poll for the (which) channel.
+// r is a resistor temp read poll for the (which) channel.
+// s is a battery temp read poll for the (which) channel.
+// b is a balance state read poll for the (which) channel.
 uint8_t vmon_which[] ={  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3 };
 uint8_t vmon_ltr[]   ={ 'v','v','v','v','r','r','r','r','v','v','v','v','s','s','s','s','v','v','v','v','b','b','b','b'};
 
@@ -260,7 +278,7 @@ void setup (void) {
 
   //init vmon structure
   int i;
-  for (i=0;i<4;i++)
+  for (i=0;i<vmons;i++)
     {
       vdata[i].volt=0.0;
       vdata[i].battemp=0;
@@ -271,6 +289,14 @@ void setup (void) {
       vdata[i].balance=0;
       vdata[i].protocol_err=0;
       vdata[i].act_balance=255;
+    }
+
+  //init vmon command q
+  for (i=0;i<cmdqlen;i++)
+    {
+      // vq[i].cmd=(char) 0;
+      vq[i].cmd_avail=0;
+      vq[i].qclaimed=0;
     }
   
   Serial.println("init NVM");
@@ -482,17 +508,32 @@ void loop (void)
 	  vmon_polltime[vmon_jj].issue = millis();
 #endif
 	}
-      sprintf(outgoing_data.message, "R%c\n",  vmon_ltr[vmon_ii]);
-      esp_now_send(vdata[vmon_which[vmon_ii]].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+      if (vq[0].cmd_avail)
+	{
+	  //  if there is a msg in the vmon queue, send it in the curent ringbuffer timeslot.
+	  // pause the real poll timeslot, dont skip the timeslot.
+	  // note as curently coded, its single entry queue with no shifting.
+	  // anyone wanting to write to the queue has to check the q is empty first.
+	  memcpy(outgoing_data.message, vq[0].cmd,  cmdlen);
+	  esp_now_send(vdata[vq[0].board].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+	  vdata[vq[0].board].sent++;     // note another message sent to this vmon 
+	  vq[0].cmd_avail = 0;            // mark cmd queue consumed. 
+	}
+      else   // only increment vmon_ii command ring buffer is I sent one.
+	{
+	  sprintf(outgoing_data.message, "R%c\n",  vmon_ltr[vmon_ii]);
+	  esp_now_send(vdata[vmon_which[vmon_ii]].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+	  
+	  // record that a message was sent on that channel
+	  vdata[vmon_which[vmon_ii]].sent++;
 
-      // record a message sent on that channel
-      vdata[vmon_which[vmon_ii]].sent++;
-      vmon_ii++;
-      if (vmon_ii >= vmon_ii_max)
-	vmon_ii = 0;
+	  // increment vmon_ii
+	  vmon_ii++;
+	  if (vmon_ii >= vmon_ii_max)
+	    vmon_ii = 0;
+	}
       last_vmon_time = millis();
     }
-
   
   // poll psu
   // update voltage/current/enable from psu if its due . update all about once per second
@@ -667,6 +708,7 @@ void parse_buf (char * in_buf)
   // Wf Field,
   //    where Field could be
   //          Mx mac    WMP=<12 ascii hex digits>  mac for Psu or Mcc or Cmt
+  //          bn=[01] switch balance on board 1..4 to given level 
   //          cv=f    charger voltage   set psu V
   //          ci=f    charger current   set psu I
   //          ce=[01] charger enable    set pse e
@@ -790,6 +832,21 @@ void parse_buf (char * in_buf)
 
   case 'W':
     switch (in_buf[1]) {
+    case 'b' :
+      match =  sscanf(in_buf, "%c%c%c=%d", &cmd, &field, &field2, &value);
+      if (match == 4)
+	Serial.printf("doing enable=%d board %c\n", value, field2);
+      // claim q.
+      while (vq[0].qclaimed == 1)
+	delay(10);
+      vq[0].qclaimed == 1;
+      field2 = (field2 -1) & 0x03; // map 1..4 to 0..3
+      snprintf(vq[0].cmd, cmdlen, "Wb=%1d\n", value);  // write q cmd string  
+      vq[0].board = field2;                            // write q board address
+      vq[0].cmd_avail = 1;
+      vq[0].qclaimed = 0;
+      break;
+
     case 'd':
       memcpy(&incoming_data.message, in_buf, strlen(in_buf));
       esp_now_send(mcc_mac, (uint8_t *) &incoming_data, sizeof(incoming_data));
@@ -1105,10 +1162,9 @@ void parse_imon_wifi_buf (char * buf)
   if (matched==1)
     {
       battery_current = fvalue;
-      Serial.printf("got %f from %s\n", battery_current, buf);
+      //      Serial.printf("got %f from %s\n", battery_current, buf);
     }
 }
 
-
-
+//
 
