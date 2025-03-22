@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-20 18:48:48 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-22 20:48:07 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -30,7 +30,7 @@
 // test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController
 // test vmon1 MAC (ME) is 5c013b6c7d14   vmon # 1
 // test vmon2 MAC (ME) is 5c013b660c9c   vmon # 2
-// test vmon3 MAC (ME) is 5c013b6d1a48   vmon # 3
+// test vmon3 MAC (ME) is 240ac4ee0360   vmon # 3 (smoked i2c with a spanenr. replaced soc.)
 // test vmon4 MAC (ME) is 5c013b6cea48   vmon # 4
 // test imon           is b8d61a5788d0
 
@@ -59,16 +59,19 @@ const uint8_t vmons = 4;  // how many vmons am I servicing
 
 struct vsdata
 {
-  float     volt ;         // battery voltage
-  int16_t   battemp;        // battery temperature
-  int16_t   restemp;        // resistor temperature
+  float     volt ;          // battery voltage.           filled by a polled read
+  int16_t   battemp;        // battery temperature        filled by a polled read
+  int16_t   restemp;        // resistor temperature       filled in by a polled read
   uint32_t  mostrecent;     // timestamp of most recent volt message from device
   uint32_t  received;       // number of messages I've received from this board   
   uint32_t  sent;           // number of messages I've sent to this board
-  uint8_t   balance;        // should it be balancing?
+  uint8_t   balance;        // should it be balancing?    filled in by a polled read
   uint8_t   act_balance;    // is it balancing?
   uint16_t  protocol_err;   // lets keep the struct aligned
+  float     gain ;          // adc gain
+  float     offset ;        // adc offset
   uint8_t   mac[6];         // vmon mac address
+
 } vdata[vmons];   // state structure for all the vmons    
 
 int32_t s2_comms_errors = 0;
@@ -101,6 +104,9 @@ const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 char serial_buf[record_size];
 uint8_t serial_buf_pointer;
 int32_t soc;
+int32_t soc_pps_freq=1000;
+uint8_t soc_pc; // 0..100
+
 
 // serial2 is used for communicating with vmons
 //const uint8_t longest_record2 = 24;  //   worst is display comand WD1=12345678901234567890
@@ -111,7 +117,7 @@ int32_t soc;
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 20 Mar 2025 Reva";
+const char * version = "MCO 22 Mar 2025 Revc";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -245,6 +251,10 @@ const uint32_t vmon_period_millis = 2000 / vmon_ii_max ; // roughly 1s for testi
 // b is a balance state read poll for the (which) channel.
 uint8_t vmon_which[] ={  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3,  0,  1,  2,  3 };
 uint8_t vmon_ltr[]   ={ 'v','v','v','v','r','r','r','r','v','v','v','v','s','s','s','s','v','v','v','v','b','b','b','b'};
+bool suspend_vmon_polling = false;
+
+
+
 
 uint32_t last_beep_time ;
 const uint32_t beep_on_period = 300;
@@ -289,6 +299,8 @@ void setup (void) {
       vdata[i].balance=0;
       vdata[i].protocol_err=0;
       vdata[i].act_balance=255;
+      vdata[i].gain = -1;
+      vdata[i].offset = -1;
     }
 
   //init vmon command q
@@ -446,11 +458,10 @@ void loop (void)
 {
   // service serial character if any available.
   do_serial_if_ready();
-  // do_serial2_if_ready();
 
   if (millis() > last_beep_time + beep_on_period)
     {
-    if (last_beep_state)
+      if (last_beep_state)
 	{
 #ifdef DC_BEEPER
 	  digitalWrite(buz_en_pin, 0);
@@ -476,7 +487,7 @@ void loop (void)
 	    }
 	  last_beep_state = true;
 	}
-    last_beep_time = millis();
+      last_beep_time = millis();
     }
 
 
@@ -493,44 +504,48 @@ void loop (void)
       write_SOC(1, soc);
       write_SOC(2, soc);
       int soc_f =     336.0 * (float)soc /  fbattery_capacity;
-      ledcChangeFrequency(soc_pps_pin, soc_f, 8);
+      if (soc_f != soc_pps_freq)
+	{ // only update soc freq generator when freq changes. meter was glitchy prior
+	  ledcChangeFrequency(soc_pps_pin, soc_f, 8);
+	  soc_pps_freq = soc_f;
+	}
       last_current_update_time = rtc.getEpoch();
     }
   
   // update voltage from vmons if its due . update all about once per second
   if (millis()  > (last_vmon_time + vmon_period_millis))
     {
+#ifdef MEAS_PERF
       uint8_t vmon_jj;
       vmon_jj = vmon_ii % 8; 
       if (vmon_jj < 4) // its a pointer to a ordering structure, only an address for the first 4
 	{
-#ifdef MEAS_PERF
 	  vmon_polltime[vmon_jj].issue = millis();
-#endif
 	}
+#endif
       if (vq[0].cmd_avail)
 	{
 	  //  if there is a msg in the vmon queue, send it in the curent ringbuffer timeslot.
 	  // pause the real poll timeslot, dont skip the timeslot.
 	  // note as curently coded, its single entry queue with no shifting.
 	  // anyone wanting to write to the queue has to check the q is empty first.
-	  memcpy(outgoing_data.message, vq[0].cmd,  cmdlen);
-	  esp_now_send(vdata[vq[0].board].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-	  vdata[vq[0].board].sent++;     // note another message sent to this vmon 
-	  vq[0].cmd_avail = 0;            // mark cmd queue consumed. 
+	  send_q_msg();
 	}
       else   // only increment vmon_ii command ring buffer is I sent one.
 	{
-	  sprintf(outgoing_data.message, "R%c\n",  vmon_ltr[vmon_ii]);
-	  esp_now_send(vdata[vmon_which[vmon_ii]].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-	  
-	  // record that a message was sent on that channel
-	  vdata[vmon_which[vmon_ii]].sent++;
-
-	  // increment vmon_ii
-	  vmon_ii++;
-	  if (vmon_ii >= vmon_ii_max)
-	    vmon_ii = 0;
+	  if (suspend_vmon_polling == false)
+	    {
+	      sprintf(outgoing_data.message, "R%c\n",  vmon_ltr[vmon_ii]);
+	      esp_now_send(vdata[vmon_which[vmon_ii]].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+	      
+	      // record that a message was sent on that channel
+	      vdata[vmon_which[vmon_ii]].sent++;
+	      
+	      // increment vmon_ii
+	      vmon_ii++;
+	      if (vmon_ii >= vmon_ii_max)
+		vmon_ii = 0;
+	    }
 	}
       last_vmon_time = millis();
     }
@@ -549,7 +564,7 @@ void loop (void)
 	}
       last_psu_time = millis();
     }
-
+  
   //   update diaplay on mcc
   if (rtc.getEpoch() > (last_display_update_time + display_update_period))
     {
@@ -573,22 +588,32 @@ void loop (void)
 	  sprintf(outgoing_data.message, "WD6=SOC=%2d%%",get_SOC(0)/battery_capacity);
 	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
 	}
-  
+      
       //D7 battery temp Vmon1
       sprintf(outgoing_data.message, "WD7=BT=%2dC", vdata[0].battemp);
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
       last_display_update_time=rtc.getEpoch();
-      
     }
-      
-	  
-	
-
-      // FIXME do logic. maxv, setup start, transition from initial to topoff,
-	// transition from topoff to stopped, balance. 
-      
-
   
+  // FIXME do logic. maxv, setup start, transition from initial to topoff,
+  // transition from topoff to stopped, balance. 
+}
+
+void send_q_msg ( void)
+{ 	  
+  memcpy(outgoing_data.message, vq[0].cmd,  cmdlen);
+  esp_now_send(vdata[vq[0].board].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+  vdata[vq[0].board].sent++;     // note another message sent to this vmon 
+  vq[0].cmd_avail = 0;            // mark cmd queue consumed. 
+}
+
+void wait_next_q_slot (void)
+{
+  while  (millis()  <= (last_vmon_time + vmon_period_millis))
+    {
+      delay(5);
+    }
+  last_vmon_time = millis();
 }
 
 const uint8_t default_mac[]     = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
@@ -597,7 +622,7 @@ const uint8_t default_psu_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0xe2, 0xd0 };
 const uint8_t default_cmt_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0x99, 0x38 };
 const uint8_t default_v1_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0x7d, 0x14 };
 const uint8_t default_v2_mac[]  = { 0x5c, 0x01, 0x3b, 0x66, 0x0c, 0x9c };
-const uint8_t default_v3_mac[]  = { 0x5c, 0x01, 0x3b, 0x6d, 0x1a, 0x48 };
+const uint8_t default_v3_mac[]  = { 0x24, 0x0a, 0xc4, 0xee, 0x03, 0x60 };
 const uint8_t default_v4_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0xea, 0x48 };
 const uint8_t default_imon_mac[]  = { 0xb8, 0xd6, 0x1a, 0x57, 0x88, 0xd0 };
 
@@ -706,12 +731,13 @@ void parse_buf (char * in_buf)
   //          P[VI] psu offset voltage =local adc voltage=DPM8624
   //          S     SOC total capacity in mA.S i guess
   // Wf Field,
-  //    where Field could be
+  //    where Field could be (volatile stuff in lower case)
   //          Mx mac    WMP=<12 ascii hex digits>  mac for Psu or Mcc or Cmt
   //          bn=[01] switch balance on board 1..4 to given level 
   //          cv=f    charger voltage   set psu V
   //          ci=f    charger current   set psu I
-  //          ce=[01] charger enable    set pse e
+  //          ce=b   charger enable    set pse e
+  //          p=b    polling  enable 1 or disable 0  vmon polling.
   //          s=n     set SOC  0..100
   //          d=display WD0=string   write display line 0..7 with given string
   //
@@ -727,6 +753,9 @@ void parse_buf (char * in_buf)
   //          G[VI]=f adc gain   current=local adc voltage=DPM8624
   //          O[VI]=f adc offset current=local adc voltage=DPM8624
   //          S=d
+  //          V[1234]we set cal write enable for specified vmon.  vmon we resets at start or on voltage read.
+  //          V[1234]G=f write adc Gain for specified vmon. It must be write enabled
+  //          V[1234]O=f write adc offset for specified vmon. It must be write enabled
   //                        
   int8_t  address;
   
@@ -742,6 +771,9 @@ void parse_buf (char * in_buf)
   int      match ;
   int      i;
   uint32_t soc;
+  uint32_t time1;
+  uint32_t time2;
+  
   cmd = in_buf[0];
   
   switch (cmd) {
@@ -760,15 +792,38 @@ void parse_buf (char * in_buf)
 	Serial.printf("Battery current=%f\n", battery_current); 
 	break;
       case 'v':
-	address = (in_buf[2] & 0x03) -1 ;   // convert ascii 1..4 ie 0x31 to 0x34 to 0..3  31->2 34->1  
-	if (address < 0)
-	  address=3;
+	address = ((in_buf[2] -1) & 0x03)  ;   // convert ascii 1..4 ie 0x31 to 0x34 to 0..3  31->2 34->1  
+	if ((in_buf[3] == 'G') || (in_buf[3] == 'O'))
+	  {
+	    // read gain or offset. this does not come from the polled read values, must add a read cmd.
+	    // I'll add a read to the write queue, and ensure the callback parser knows about them
+	      snprintf(out_buf, out_buf_len, "R%c\n", in_buf[3]);    // generate q cmd string for a write balance  
+	      write_vmon_wq(address, out_buf, strlen(out_buf)+1);
+	      // wait till next q slot
+	      wait_next_q_slot();
+	      
+	      // sendq
+	      send_q_msg();
+	      
+	      // wait till next q slot
+	      wait_next_q_slot();
+	      
+	      // read result.
+	      if (in_buf[3] == 'G')
+		Serial.printf("vmon %d G=%f\n", address+1, vdata[address].gain);
+	      else
+		Serial.printf("vmon %d O=%f\n", address+1, vdata[address].offset);
+	      // NB, as loop is single threaded and loop runs the poll q, must read twice!
+	  }
+	else
+	  {
 	Serial.printf("Vmon %d voltage=%1.3f bt=%1dC rt=%1dC b=%d be=%d updated %1d seconds ago msgs s=%1d r=%1d errs=%1d\n",
 		      address+1, vdata[address].volt,
 		      vdata[address].battemp, vdata[address].restemp,
 		      vdata[address].balance, vdata[address].act_balance, 
 		      rtc.getEpoch() - vdata[address].mostrecent,
 		      vdata[address].sent, vdata[address].received, vdata[address].protocol_err); 
+	  }
 	break;
       case 't' :
 	Serial.printf("current time %d %s\n", rtc.getEpoch(), rtc.getTime()); 
@@ -835,16 +890,12 @@ void parse_buf (char * in_buf)
     case 'b' :
       match =  sscanf(in_buf, "%c%c%c=%d", &cmd, &field, &field2, &value);
       if (match == 4)
-	Serial.printf("doing enable=%d board %c\n", value, field2);
-      // claim q.
-      while (vq[0].qclaimed == 1)
-	delay(10);
-      vq[0].qclaimed == 1;
-      field2 = (field2 -1) & 0x03; // map 1..4 to 0..3
-      snprintf(vq[0].cmd, cmdlen, "Wb=%1d\n", value);  // write q cmd string  
-      vq[0].board = field2;                            // write q board address
-      vq[0].cmd_avail = 1;
-      vq[0].qclaimed = 0;
+	{
+	// Serial.printf("doing enable=%d board %c\n", value, field2);
+	  field2 = (field2 -1) & 0x03; // map 1..4 to 0..3
+	  snprintf(out_buf, out_buf_len, "Wb=%1d\n", value);    // generate q cmd string for a write balance  
+	  write_vmon_wq(field2, out_buf, strlen(out_buf)+1);
+	}
       break;
 
     case 'd':
@@ -868,6 +919,24 @@ void parse_buf (char * in_buf)
 	  break;
 	}
       break;
+      
+    case 'p' :
+      if (in_buf[3] == '1')
+	{
+#ifdef DEBUG
+	  Serial.printf("enable vmon polling\n");
+#endif
+	  suspend_vmon_polling = false; // enable polling ie don't suspend polling
+	}
+      else
+	{
+#ifdef DEBUG
+	  Serial.printf("disable vmon polling\n");
+#endif
+	  suspend_vmon_polling = true;
+	}
+      break;
+	
     case 's' :
       match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
       soc  = (float) value * (float) battery_capacity / 100.0;
@@ -954,6 +1023,7 @@ void parse_buf (char * in_buf)
       mcoPrefs.end();                              // Close the namespace
       load_operational_params();
       break;
+
     case  'O' :
       match =  sscanf(in_buf, "%c%c%c=%f", &cmd, &field,&field2, &fvalue);
       mcoPrefs.begin("mcoPrefs", RW_MODE);         // Open our namespace for write
@@ -964,6 +1034,7 @@ void parse_buf (char * in_buf)
       mcoPrefs.end();                              // Close the namespace
       load_operational_params();
       break;
+
     case  'S' :
       match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
       mcoPrefs.begin("mcoPrefs", RW_MODE);         // Open our namespace for write
@@ -971,11 +1042,60 @@ void parse_buf (char * in_buf)
       mcoPrefs.end();                              // Close the namespace
       load_operational_params();
       break;
+      
+    case 'V' :
+      // doing Write Vmon #vmon we || Write Vmon #vmon G=f || Write Vmon #vmon O=f  to write cal terms to vmons  
+      match =  sscanf(in_buf, "WV%d%c=%f", &field2, &cmd, &fvalue);
+      if (match == 3)
+	{ // either WV2O=1.234  or WV1G=5.678
+#ifdef DEBUG
+	  Serial.printf("cal gain/offset write on vmon %d\n", field2);
+#endif
+	  field2 = (field2 -1) & 0x03; // map 0x31..0x34 to 0..3
+	  snprintf(out_buf, out_buf_len, "W%c=%f\n", cmd, fvalue);    // generate q cmd string for a write   
+	  write_vmon_wq(field2, out_buf, strlen(out_buf)+1);
+	}
+      else
+	{
+	  match =  sscanf(in_buf, "WV%1dw%c", &field2, &cmd);
+	  if ((match == 2) && (cmd == 'e'))
+	    { //  WV3we 
+#ifdef DEBUG
+	      Serial.printf("enable cal write on vmon %d\n", field2);
+#endif
+	      field2 = (field2 -1) & 0x03; // map 0x31..0x34 to 0..3
+	      snprintf(out_buf, out_buf_len, "Wwe\n", fvalue);    // generate q cmd string for a cal write enable
+	      write_vmon_wq(field2, out_buf, strlen(out_buf)+1);
+	    }	    
+	}
+      break;
     }      
     break;
     // end of 'W'
   }    
 }
+
+// write a message to the vmon write queue.  As vmons are polled continuously, this queue mechanism interrupts
+// polling, using the next poll slot to send this message to the specified vmon.  polling resumes without
+// skipping a poll in the subsequent poll slot. So polling just gets a tad delayed. 
+//
+//  uint not ascii vmon address  0..3
+void write_vmon_wq (      uint8_t vmon, char * message, uint8_t msglen)
+{
+  // check nobody else is writing a record
+  while (vq[0].qclaimed == 1)
+	delay(10);
+  // check there is a queue slot available. its a single entry queue right now.
+  while (vq[0].cmd_avail == 1)
+	delay(10);
+  // ok, queue position is available. write the command to the queue
+  vq[0].qclaimed == 1;
+  memcpy(vq[0].cmd,  message, msglen);
+  vq[0].board = vmon;                            // write q board address
+  vq[0].cmd_avail = 1;
+  vq[0].qclaimed = 0;
+}
+
 
 void set_psu_v(float volt)
 {
@@ -1143,6 +1263,34 @@ void parse_vmon_wifi_buf (char * buf, uint8_t address)
 	{
 	  vdata[address].battemp = value;
 	  vdata[address].received++;
+	}
+      else 
+	vdata[address].protocol_err++;
+      break;
+
+    case 'G' : // read adc gain
+      matched = sscanf(buf, "G=%f\n",  &fvalue);
+      if (matched==1)
+	{
+#ifdef DEBUG
+	  Serial.printf("read vmon %d adc_gain=%f\n", address, fvalue);
+#endif
+	  vdata[address].gain = fvalue;
+	  // vdata[address].received++;
+	}
+      else 
+	vdata[address].protocol_err++;
+      break;
+
+    case 'O' : // read adc gain
+      matched = sscanf(buf, "O=%f\n",  &fvalue);
+      if (matched==1)
+	{
+#ifdef DEBUG
+	  Serial.printf("read vmon %d adc_offset=%f\n", address, fvalue);
+#endif
+	  vdata[address].offset = fvalue;
+	  // vdata[address].received++;
 	}
       else 
 	vdata[address].protocol_err++;

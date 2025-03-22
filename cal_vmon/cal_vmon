@@ -1,6 +1,15 @@
 #!/usr/bin/perl -w
+#    -*- Mode: cperl     -*-
+# emacs automagically updates the timestamp field on save
+# my $ver =  'cal_vmon   Time-stamp: "2025-03-22 21:37:32 john"';
 
 # this script is to auto test and cal the 4 vmons.
+# as of right now, it only tests cal.
+# I have not given the vmons wifi access to cal write... in case that was to get overwritten by noise by mistake..
+# I _could_ add read access to gain and offset without risk. - just bit of extra code in mco and vmon
+# I could add write access to gain and offset protected by some odd command
+# and to be extra sure that cal write access could be removed by something very routine, like reading voltage.
+# OK, done that, lets see if it works...
 
 # testing will check
 # 1. temp read from battery temp sensors
@@ -30,12 +39,15 @@ my $logfile = "cal.log";
 my $baud = 115200;
 my $board = 1;
 my $lh;
+my $cal = '';
+# If i is a member of cal, then cal that board, don't just cal check it. --CAL 1234 means cal all 4.
 
 &GetOptions (
 	     'vcmd=s',    \$vcmd,
 	     'icmd=s',    \$icmd,
 	     'mcoport=s',    \$mcoport,
 	     'baud=s',    \$baud,
+	     'CAL=s',     \$cal, 
 	     'board=n',   \$board
 	    );
 
@@ -43,52 +55,149 @@ my $lh;
 (my $handle, my $success) = &openserial($mcoport,$baud);
 print "open serial success=$success\n" if ($success !=1);
 
-&open_logfile;
+# handle interrupt more cleanly, by closing logfile prior to exit. which should flush it.
+$SIG{INT} = sub { close $lh; die "close logfile and exit\n";};
+$SIG{TERM} = sub { close $lh; die "close logfile and exit\n";};
+
+
+$lh = &open_logfile();
 # printb(sprintf("board %1d V=%f\n", $board, &read_v($board))); 
+my $i;
+my $v;
+my $bv;
+my $i2;
+my $v2;
+my $bv2;
+my $i3;
+my $v3;
+my $bv3;
+
+
+
 
 for(my $i=1; $i<=4; $i++)
+# a cal check pass
   {
+    enable_polling();
     chk_bd($i);
+    # and a cal perform pass for those channels is enabled
+    if ($cal =~ /$i/) {
+      do_cal_bd($i);
+    }
   }
+
+close($lh);
+closeserial($handle);
+
+
+
+
+# call this immediately after chk_bd.
+sub do_cal_bd
+{
+  my $board = shift;
+  my $err = (($v - $bv) + ($v3 - $bv3)) / (($v + $v3) / 2);
+  my $orig_gain = &read_gain($board);
+  my $new_gain;
+  if ($err != 0)
+    {
+      $new_gain = $orig_gain * (1+$err);
+      printb(sprintf ("orig gain was %f, calculated better gain is %f\n", $orig_gain, $new_gain));
+#      printf " doing write_gain\n"; 
+      &write_gain($board, $new_gain);
+#      printf " done write_gain\n"; 
+    }
+}
+
+sub read_gain
+{
+  my $bd = shift;
+  &disable_polling();
+  printf $handle ("Rv%dG\n", $bd);
+  my $l  = &get_serial_line($handle);
+  $l =~ /G=([\d\.]+)/;
+  &enable_polling();
+  return $1;
+}
+
+
+sub disable_polling
+{
+  printf $handle ("Wp=0\n");
+  sleep 1;
+}
+
+sub enable_polling
+{
+  printf $handle ("Wp=1\n");
+  sleep 1;
+}
+
+sub write_gain
+{
+  my $bd = shift;
+  my $ngain =  shift;
+#  print "doing disable_polling\n";
+  &disable_polling();
+  printf $handle ("WV%dwe\n", $bd);
+  sleep 1;
+#  print "doing write gain\n";
+  printf $handle ("WV%dG=%f\n", $bd, $ngain);
+  #my $l  = &get_serial_line($handle);
+  #$l =~ /G=([\d\.]+)/;
+  sleep 1;
+#  print "doing enable_polling\n";
+  &enable_polling();
+}
+
 
 
 sub chk_bd
 {
   my $bd = shift;
-  my $i = &get_i;
-  my $v = &get_v;
-  my $bv = &read_v($bd);
+  $i = &get_i;
+  $v = &get_v;
+  $bv = &read_v($bd);
   my $bt = &read_bt($bd);
   my $rt = &read_rt($bd);
-  printf "board %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
-    $bd, $v, $bv, $i, $bt, $rt, $v-$bv;
-
+  printb(sprintf "board %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
+    $bd, $v, $bv, $i, $bt, $rt, $v-$bv);
+ # printf("running set_b\n");
+  
   &set_b($bd, 1);
   sleep 10;
-  my $v2 = &get_v;
-  my $i2 = &get_i;
-  my $bv2 = &read_v($bd);
+
+  $v2 = &get_v;
+#  printf("got v2 = $v2");
+  $i2 = &get_i;
+  $bv2 = &read_v($bd);
   my $bt2 = &read_bt($bd);
   my $rt2 = &read_rt($bd);
-  printf "en=1  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d deltai=%3.1f dv=%2.3f\n",
-    $bd, $v2, $bv2, $i2, $bt2, $rt2, $i2 - $i, $v2-$bv2;
+  printb(sprintf "en=1  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d deltai=%3.1f dv=%2.3f\n",
+    $bd, $v2, $bv2, $i2, $bt2, $rt2, $i2 - $i, $v2-$bv2);
 
   &set_b($bd, 0);
   sleep 10;
-  my $v3 = &get_v;
-  my $i3 = &get_i;
-  my $bv3 = &read_v($bd);
+  $v3 = &get_v;
+  $i3 = &get_i;
+  $bv3 = &read_v($bd);
   my $bt3 = &read_bt($bd);
   my $rt3 = &read_rt($bd);
-  printf "en=0  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
-    $bd, $v3, $bv3, $i3, $bt3, $rt3, $v3-$bv3;
-  printf "difference between deltav with balance on and deltav bal off averages %1.4f\n",
-    ($v + $v3 - $bv - $bv3) /2  - ($v2 - $bv2); 
+  printb(sprintf "en=0  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
+    $bd, $v3, $bv3, $i3, $bt3, $rt3, $v3-$bv3);
+  printb(sprintf "difference between deltav with balance on and deltav bal off averages %1.4f\n",
+    ($v + $v3 - $bv - $bv3) /2  - ($v2 - $bv2));
+
 }
 
-  
-  sub printb
-{ my $string = shift;
+
+
+
+
+# print to both logfile and stdout
+sub printb
+{
+  my $string = shift;
   print $string;
   print $lh $string;
 }
@@ -99,9 +208,10 @@ sub set_b # setbalance
   my $board = shift;
   my $bal = shift;
   printf $handle ("Wb%d=%d\n", $board, $bal);
-  my $l  = &get_serial_line($handle);
-  $l =~ /oltage=([\d\.]+)/;
-  return $1;
+  #my $l  = &get_serial_line($handle);
+  #$l =~ /oltage=([\d\.]+)/;
+  #return $1;
+  sleep 1;
 }
 sub read_v
 {
@@ -229,14 +339,16 @@ sub mapbaud {
 }
  
 
-sub  open_logfile { # for append
-    open($lh, ">>", $logfile) or die "Could not open logfile $logfile for append $!";
-    $lh->autoflush(1);
+sub  open_logfile  # for append
+{
+  open($lh, ">>", $logfile) or die "Could not open logfile $logfile for append $!";
+  $lh->autoflush(1);
+  return $lh;
 }
 
 
 sub closeserial {
-  sysclose $_[0];
+  close shift;
 }
 
 
