@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 #    -*- Mode: cperl     -*-
 # emacs automagically updates the timestamp field on save
-# my $ver =  'cal_vmon   Time-stamp: "2025-03-22 21:37:32 john"';
+# my $ver =  'cal_vmon   Time-stamp: "2025-03-23 15:44:17 john"';
 
 # this script is to auto test and cal the 4 vmons.
 # as of right now, it only tests cal.
@@ -40,6 +40,7 @@ my $baud = 115200;
 my $board = 1;
 my $lh;
 my $cal = '';
+my $l;
 # If i is a member of cal, then cal that board, don't just cal check it. --CAL 1234 means cal all 4.
 
 &GetOptions (
@@ -62,7 +63,7 @@ $SIG{TERM} = sub { close $lh; die "close logfile and exit\n";};
 
 $lh = &open_logfile();
 # printb(sprintf("board %1d V=%f\n", $board, &read_v($board))); 
-my $i;
+my $ii;
 my $v;
 my $bv;
 my $i2;
@@ -72,13 +73,56 @@ my $i3;
 my $v3;
 my $bv3;
 
+if (my $n=  &empty_serial_line($handle)) {
+    print "start emptied $n\n";}
+printb("disable then enable polling\n");
+
+disable_polling();
+sleep (1);
+enable_polling();
+sleep (5);
 
 
+
+
+printb("currents, polling and presumably napping\n");
+&check_current(10);
+
+
+printb("currents, not polling\n");
+disable_polling();
+sleep 2;
+&check_current(10);
+
+
+
+
+
+printb("set we and inhibit naps. restart polling\n");
+for(my $j=1; $j<=4; $j++)
+  {
+    printf $handle ("WV%1dE=2000\n", $j);
+    #$l  = &get_serial_line($handle);
+    sleep 1;
+  }
+
+enable_polling();
+printb("and check current\n");
+sleep 2;
+&check_current(10);
+
+for(my $i=1; $i<=4; $i++)
+  {
+    chk_bal($i);
+  }
+
+# now let things cool
+sleep 10;
 
 for(my $i=1; $i<=4; $i++)
 # a cal check pass
   {
-    enable_polling();
+    # enable_polling();
     chk_bd($i);
     # and a cal perform pass for those channels is enabled
     if ($cal =~ /$i/) {
@@ -96,25 +140,26 @@ closeserial($handle);
 sub do_cal_bd
 {
   my $board = shift;
-  my $err = (($v - $bv) + ($v3 - $bv3)) / (($v + $v3) / 2);
+  #my $err = (($v - $bv) + ($v3 - $bv3)) / (($v + $v3) / 2);
+  
   my $orig_gain = &read_gain($board);
+  my $mm_v = $v + $v3;
+  my $bd_v  = $bv + $bv3;
   my $new_gain;
-  if ($err != 0)
-    {
-      $new_gain = $orig_gain * (1+$err);
-      printb(sprintf ("orig gain was %f, calculated better gain is %f\n", $orig_gain, $new_gain));
-#      printf " doing write_gain\n"; 
-      &write_gain($board, $new_gain);
-#      printf " done write_gain\n"; 
-    }
+  $new_gain = $orig_gain * $mm_v / $bd_v;
+  printb(sprintf ("orig gain was %f, calculated better gain is %f\n", $orig_gain, $new_gain));
+  #      printf " doing write_gain\n"; 
+  &write_gain($board, $new_gain);
+  #      printf " done write_gain\n"; 
 }
+
 
 sub read_gain
 {
   my $bd = shift;
   &disable_polling();
   printf $handle ("Rv%dG\n", $bd);
-  my $l  = &get_serial_line($handle);
+  $l  = &get_serial_line($handle);
   $l =~ /G=([\d\.]+)/;
   &enable_polling();
   return $1;
@@ -138,46 +183,31 @@ sub write_gain
   my $bd = shift;
   my $ngain =  shift;
 #  print "doing disable_polling\n";
-  &disable_polling();
-  printf $handle ("WV%dwe\n", $bd);
-  sleep 1;
+#  &disable_polling();
+#  printf $handle ("WV%dwe\n", $bd);
+#  sleep 1;
 #  print "doing write gain\n";
   printf $handle ("WV%dG=%f\n", $bd, $ngain);
   #my $l  = &get_serial_line($handle);
   #$l =~ /G=([\d\.]+)/;
   sleep 1;
 #  print "doing enable_polling\n";
-  &enable_polling();
+#  &enable_polling();
 }
-
-
 
 sub chk_bd
 {
   my $bd = shift;
-  $i = &get_i;
+  $ii = &get_i;
   $v = &get_v;
   $bv = &read_v($bd);
   my $bt = &read_bt($bd);
   my $rt = &read_rt($bd);
   printb(sprintf "board %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
-    $bd, $v, $bv, $i, $bt, $rt, $v-$bv);
- # printf("running set_b\n");
+    $bd, $v, $bv, $ii, $bt, $rt, $v-$bv);
+
+  sleep 1;
   
-  &set_b($bd, 1);
-  sleep 10;
-
-  $v2 = &get_v;
-#  printf("got v2 = $v2");
-  $i2 = &get_i;
-  $bv2 = &read_v($bd);
-  my $bt2 = &read_bt($bd);
-  my $rt2 = &read_rt($bd);
-  printb(sprintf "en=1  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d deltai=%3.1f dv=%2.3f\n",
-    $bd, $v2, $bv2, $i2, $bt2, $rt2, $i2 - $i, $v2-$bv2);
-
-  &set_b($bd, 0);
-  sleep 10;
   $v3 = &get_v;
   $i3 = &get_i;
   $bv3 = &read_v($bd);
@@ -188,6 +218,55 @@ sub chk_bd
   printb(sprintf "difference between deltav with balance on and deltav bal off averages %1.4f\n",
     ($v + $v3 - $bv - $bv3) /2  - ($v2 - $bv2));
 
+}
+
+
+
+
+sub chk_bal
+{
+  my $bd = shift;
+  
+  &set_b($bd, 1);
+  sleep 10;
+
+  $v2 = &get_v;
+  $i2 = &get_i;
+  $bv2 = &read_v($bd);
+  my $bt2 = &read_bt($bd);
+  my $rt2 = &read_rt($bd);
+  printb(sprintf "en=1  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d ",
+    $bd, $v2, $bv2, $i2, $bt2, $rt2);
+
+  &set_b($bd, 0);
+
+}
+
+# just checks the total current 
+sub check_current
+{
+  my $tot_i = 0;
+  my $tot_v = 0;
+  my $min_i = 1000;
+  my $max_i = 0;
+  my $i;
+  my $v;
+  my $avg = shift;
+  for (my $j=0; $j<$avg; $j++) {
+    $i = &get_i;
+    $v = &get_v;
+    #  $bv = &read_v($bd);    lets not poll
+    if ($i > $max_i)
+      {$max_i = $i}
+    if ($i < $min_i)
+      {$min_i = $i}
+    $tot_i += $i;
+    $tot_v += $v;
+    sleep 1;
+  }
+
+  printb(sprintf "boards together draw %3.1fmA at %2.3fV, maxI=%3.1fmA, minI=%3.1fmA\n",
+	 $tot_i/$avg, $tot_v/$avg, $max_i, $min_i)
 }
 
 
@@ -215,26 +294,35 @@ sub set_b # setbalance
 }
 sub read_v
 {
+  if (my $n=  &empty_serial_line($handle)) {
+    print "read_v emptied $n\n";}
   my $board = shift;
+#  printf "read_v $board\n";
   printf $handle ("Rv%d\n", $board);
-  my $l  = &get_serial_line($handle);
+  $l  = &get_serial_line($handle);
+#  printf "read_v %s\n", $l;
   $l =~ /oltage=([\d\.]+)/;
   return $1;
 }
 sub read_rt
 {
+  if (my $n=  &empty_serial_line($handle)) {
+    print "read_rt emptied $n\n";}
   my $board = shift;
   printf $handle ("Rv%d\n", $board);
-  my $l  = &get_serial_line($handle);
+  $l  = &get_serial_line($handle);
   #print "rt $l\n";
   $l =~ /\srt=([\d\.]+)C/;
   return $1;
 }
 sub read_bt
 {
+  if (my $n=  &empty_serial_line($handle)) {
+    print "read_bt emptied $n\n";}
+
   my $board = shift;
   printf $handle ("Rv%d\n", $board);
-  my $l  = &get_serial_line($handle);
+  $l  = &get_serial_line($handle);
   #print "bt $l\n";
   $l =~ /bt=([\d\.]+)C/;
   return $1;
@@ -288,6 +376,30 @@ sub get_serial_line
 {
   my $handle = shift;
   return <$handle>;
+}
+
+sub empty_serial_line
+{
+  my $buffer;
+  #  my $n;
+  my $handle = shift;
+  #  while($n=sysread($handle,$buffer, 1024))
+  #    {
+  #     printf "emptied %d chars\n", $n;
+  #  }
+  my $readlen =0;
+  while ( poll($handle) )
+    {
+      $readlen += read( $handle , $buffer , 1 );
+    }
+  return $readlen;
+}
+
+sub poll {
+    my ($fh) = @_;
+    my $in = '';
+    vec($in,fileno($fh),1) = 1;
+    return select($in,undef,undef,0);
 }
 
 

@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-22 20:48:07 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-23 11:53:23 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -117,7 +117,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 22 Mar 2025 Revc";
+const char * version = "MCO 23 Mar 2025 Revb";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -607,13 +607,17 @@ void send_q_msg ( void)
   vq[0].cmd_avail = 0;            // mark cmd queue consumed. 
 }
 
-void wait_next_q_slot (void)
+void wait_next_q_slot (uint8_t slots)
 {
-  while  (millis()  <= (last_vmon_time + vmon_period_millis))
+  uint8_t i;
+  for (i=0; i<slots; i++)
     {
-      delay(5);
+      while  (millis()  <= (last_vmon_time + vmon_period_millis))
+	{
+	  delay(5);
+	}
+      last_vmon_time = millis();
     }
-  last_vmon_time = millis();
 }
 
 const uint8_t default_mac[]     = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
@@ -753,7 +757,7 @@ void parse_buf (char * in_buf)
   //          G[VI]=f adc gain   current=local adc voltage=DPM8624
   //          O[VI]=f adc offset current=local adc voltage=DPM8624
   //          S=d
-  //          V[1234]we set cal write enable for specified vmon.  vmon we resets at start or on voltage read.
+  //          V[1234]E=%4d set cal write enable for specified vmon.  vmon we resets at start or on nth voltage read.
   //          V[1234]G=f write adc Gain for specified vmon. It must be write enabled
   //          V[1234]O=f write adc offset for specified vmon. It must be write enabled
   //                        
@@ -799,14 +803,14 @@ void parse_buf (char * in_buf)
 	    // I'll add a read to the write queue, and ensure the callback parser knows about them
 	      snprintf(out_buf, out_buf_len, "R%c\n", in_buf[3]);    // generate q cmd string for a write balance  
 	      write_vmon_wq(address, out_buf, strlen(out_buf)+1);
-	      // wait till next q slot
-	      wait_next_q_slot();
+	      // wait till next q slot. or next 4 if the target may be napping
+	      wait_next_q_slot(4);
 	      
 	      // sendq
 	      send_q_msg();
 	      
 	      // wait till next q slot
-	      wait_next_q_slot();
+	      wait_next_q_slot(4);
 	      
 	      // read result.
 	      if (in_buf[3] == 'G')
@@ -1045,11 +1049,11 @@ void parse_buf (char * in_buf)
       
     case 'V' :
       // doing Write Vmon #vmon we || Write Vmon #vmon G=f || Write Vmon #vmon O=f  to write cal terms to vmons  
-      match =  sscanf(in_buf, "WV%d%c=%f", &field2, &cmd, &fvalue);
-      if (match == 3)
+      match =  sscanf(in_buf, "WV%c%c=%f", &field2, &cmd, &fvalue);
+      if ((match == 3) && ((cmd == 'G') || (cmd == 'O'))) 
 	{ // either WV2O=1.234  or WV1G=5.678
 #ifdef DEBUG
-	  Serial.printf("cal gain/offset write on vmon %d\n", field2);
+	  Serial.printf("cal gain/offset write on vmon %c %c=%f\n", field2, cmd, fvalue);
 #endif
 	  field2 = (field2 -1) & 0x03; // map 0x31..0x34 to 0..3
 	  snprintf(out_buf, out_buf_len, "W%c=%f\n", cmd, fvalue);    // generate q cmd string for a write   
@@ -1057,14 +1061,14 @@ void parse_buf (char * in_buf)
 	}
       else
 	{
-	  match =  sscanf(in_buf, "WV%1dw%c", &field2, &cmd);
-	  if ((match == 2) && (cmd == 'e'))
-	    { //  WV3we 
+	  match =  sscanf(in_buf, "WV%cE=%4d", &field2, &value);
+	  if ((match == 2))
+	    { //  WV3E=%4d
 #ifdef DEBUG
-	      Serial.printf("enable cal write on vmon %d\n", field2);
+	      Serial.printf("enable cal write on vmon %c inhibit napping %d times.\n", field2, value);
 #endif
 	      field2 = (field2 -1) & 0x03; // map 0x31..0x34 to 0..3
-	      snprintf(out_buf, out_buf_len, "Wwe\n", fvalue);    // generate q cmd string for a cal write enable
+	      snprintf(out_buf, out_buf_len, "WW=%04d\n", value);    // generate q cmd string for a cal write enable
 	      write_vmon_wq(field2, out_buf, strlen(out_buf)+1);
 	    }	    
 	}

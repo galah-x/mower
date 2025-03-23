@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-22 16:56:11 john"';
+// my $ver =  'vmn   Time-stamp: "2025-03-23 14:15:20 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -34,7 +34,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-// #define DEBUG
+#define DEBUG
 
 // for preferences
 #define RW_MODE false
@@ -50,7 +50,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "VMON WIFI 22 Mar 2025 Reva";
+const char * version = "VMON WIFI 23 Mar 2025 Reva";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -67,6 +67,7 @@ uint8_t board_address;
 int     s2baud;       // serial 2 baud rate
 bool nap = false;
 int32_t  nap_us;      // how long to nap for, in uS
+
 
 /* IOs  definitions */
 const uint8_t balance_en_pin  = 18;    // enable balance current dumper
@@ -90,6 +91,8 @@ int     resistor_temperature;    // current value of heatsink temperature for th
 bool    balance=false;           // true if mco has told me to balance.
 float   voltage = 0.0;           // current battery voltage
 bool    cal_we  = false;         // this is a write enable for cal from the wifi interface.
+int16_t we_poll_cd =0;           // this poll counter decrements if positive every voltage read.
+                                 // when 0, resets cal_we AND allows napping on polls to restart. 
 
 ESP32Time rtc;
 unsigned long last_temp_update_time;   // time last temperature was polled in seconds. 2 sensors alternate
@@ -117,13 +120,20 @@ esp_now_peer_info_t peerInfo;
 // wifi callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
-  if (nap)
-    { // nap here, as its called after the poll response has completed.
-      esp_wifi_stop();
-      esp_err_t result = esp_sleep_enable_timer_wakeup(nap_us);
-      esp_light_sleep_start();     // Enter light sleep
-      esp_wifi_start();
-    }						    
+  if (we_poll_cd > 0)
+    we_poll_cd--;           // poll counter used to inhibit napping under current testing and voltage cal.
+  
+  if (we_poll_cd == 0)
+    {
+      cal_we = false;
+      if (nap)
+	{ // nap here, as its called after the poll response has completed.
+	  esp_wifi_stop();
+	  esp_err_t result = esp_sleep_enable_timer_wakeup(nap_us);
+	  esp_light_sleep_start();     // Enter light sleep
+	  esp_wifi_start();
+	}
+    }
 }
 
 
@@ -199,6 +209,7 @@ void setup (void) {
    // init some general variables and IOs 
    serial_buf_pointer = 0;
    cal_we = false;
+   we_poll_cd = 0;
    
    // init esp_now wifi 
    WiFi.mode(WIFI_STA);
@@ -412,7 +423,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	break;
 
       case 'N':
-	snprintf(out_buf, out_buf_len, "nap_en=%1d nap_time=%d\n", nap, nap_us);
+	snprintf(out_buf, out_buf_len, "nap_en=%1d nap_time=%d we_poll_cd=%d\n", nap, nap_us, we_poll_cd);
 	break;
 
       case 'O':
@@ -575,6 +586,7 @@ void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
   uint8_t field;
   float fvalue;
   int match;
+  int value;
   
   cmd = in_buf[0];
   if (cmd == 'R')
@@ -592,7 +604,6 @@ void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
 
       case 'v':
 	snprintf(out_buf, out_buf_len, "v=%2.3f\n", get_voltage());
-	cal_we = false;
 	break;
 
       case 'r':
@@ -634,17 +645,26 @@ void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
 	  snprintf(out_buf, out_buf_len, "bok\n");
 	  break;
 	  
-	case 'w':  // Wwe\n  enables write to the adc gain and offset terms.   It gets reset by any voltage read.
+	case 'W':  // WW=%4d\n  enables write to the adc gain and offset terms.
+	           // It gets reset by n  voltage reads, where n is the parameter carried.
+	           // it also inhibits napping for n reads if napping is enabled.
+	           // facilitating current checks and voltage cal.
 	           // this is to protect the calibration terms from accidental overwrite.
-	  if (in_buf[2] == 'e')
+	  match =  sscanf(in_buf, "WW=%4d", &value);
+	  if (match == 1)
 	    {
-	      Serial.printf("got we set\n");
+#ifdef DEBUG
+	      Serial.printf("we set for %d polls, napping inhibited then too.\n", value);
+#endif
 	      cal_we = true;
+	      we_poll_cd = value;
 	    }
 	  break;
 	  
 	case 'G':
+#ifdef DEBUG
 	  Serial.printf("got gain write with we =%d\n", cal_we);
+#endif
 	  if (cal_we)
 	    {
 	      match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
@@ -660,7 +680,9 @@ void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
 	  break;
 	  
 	case 'O':
+#ifdef DEBUG
 	  Serial.printf("got offset write with we =%d\n", cal_we);
+#endif
 	  if (cal_we)
 	    {
 	      match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
