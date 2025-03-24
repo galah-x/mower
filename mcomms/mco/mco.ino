@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-24 15:43:13 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-24 21:05:12 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -141,6 +141,7 @@ float   topoff_charge_voltage;
 float   transition_current;
 float   cutoff_current;
 float   max_battery_voltage;
+float   min_battery_voltage; 
 float   batt_balance_voltage;
 float   batt_balance_tol_voltage;
 int32_t  battery_capacity;  //mA Seconds
@@ -150,12 +151,15 @@ float   adc_gain;
 float   adc_offset;
 float   psu_gain;
 float   psu_offset;
+uint32_t old_message_time;
 
-// and runtime variables
-float battery_current;
-float charger_voltage;
-float charger_current;
-bool  charger_enable;
+struct charger_str
+{
+  float voltage;
+  float current;
+  uint32_t mostrecent;
+  bool  enable;
+} charger ;
 
 
 typedef struct struct_message {
@@ -228,6 +232,11 @@ const uint16_t display_update_period = 1; // seconds.
 
 uint32_t last_current_update_time;
 const uint16_t current_update_period = 1; // seconds.
+
+uint32_t       last_charger_state_update_time;     // time last charger state update happened , in seconds
+const uint16_t charger_state_update_period = 2; // seconds.
+
+enum CState{Charger_not_init, CC, CV, Done} State; 
 
 
 // FRAM fram;
@@ -344,6 +353,14 @@ void setup (void) {
       vpoll[i+16].letter = 'v';  // then do another voltage poll for each vmon
       vpoll[i+20].letter = 'b';  // then do a balance set poll for each vmon
     }
+
+  // init charger structure
+  charger.voltage = 0.0;
+  charger.current = 0.0;
+  charger.enable = 0;
+  charger.mostrecent = 0;
+  State = Charger_not_init;
+    
   
   Serial.println("init NVM");
   // initialize NVM  
@@ -381,10 +398,9 @@ void setup (void) {
 
    // init some general variables and IOs 
    serial_buf_pointer = 0;
-   //serial2_buf_pointer = 0;
    last_current_update_time = rtc.getEpoch();
    last_display_update_time = rtc.getEpoch();
-
+   last_charger_state_update_time = rtc.getEpoch();
 
    // at startup, confirm all 4 vmons are present.
    // play a beep code if not so.
@@ -402,23 +418,21 @@ void setup (void) {
    if (get_SOC(0) == get_SOC(1))
      {
      if (get_SOC(2) != get_SOC(0))
-       write_SOC(2, get_SOC(0));    // is 2 is the odd one out, rewrite it.
+       write_fram_SOC(2, get_SOC(0));    // is 2 is the odd one out, rewrite it.
      }
    else if (get_SOC(0) == get_SOC(2))
      {
        if (get_SOC(1) != get_SOC(0))
-	 write_SOC(1, get_SOC(0));    // is 1 is the odd one out, rewrite it.
+	 write_fram_SOC(1, get_SOC(0));    // is 1 is the odd one out, rewrite it.
      }
    else if (get_SOC(1) == get_SOC(2))
      {
        if (get_SOC(0) != get_SOC(1))
-	 write_SOC(0, get_SOC(1));    // is 1 is the odd one out, rewrite it.
+	 write_fram_SOC(0, get_SOC(1));    // is 1 is the odd one out, rewrite it.
      } 
    else
      { 
        write_SOC(0, 3600000 * 50);    // initilize to 50% as I have no idea
-       write_SOC(1, 3600000 * 50);    // initilize to 50% as I have no idea
-       write_SOC(2, 3600000 * 50);    // initilize to 50% as I have no idea
      }       
    soc = get_SOC(0);
 
@@ -533,10 +547,12 @@ void loop (void)
 	Serial.println("adc is busy?");
 	delay(1000);
       }
-      soc = get_SOC(0) + (int32_t) (battery_current * 2000.0 * current_update_period);
+      soc = get_SOC(0) + (int32_t) (imon.current * 2000.0 * current_update_period);
+      if (soc < 0)
+	soc = 0;
+      if (soc > battery_capacity)
+	soc = battery_capacity;
       write_SOC(0, soc);
-      write_SOC(1, soc);
-      write_SOC(2, soc);
       int soc_f =     336.0 * (float)soc /  fbattery_capacity;
       if (soc_f != soc_pps_freq)
 	{ // only update soc freq generator when freq changes. meter was glitchy prior
@@ -605,15 +621,24 @@ void loop (void)
       uint8_t i;
       for (i=0; i< vmons; i++)    // battery voltages
 	{ 
-	  sprintf(outgoing_data.message, "WD%1d=%1d %2.3fV B%1d", i, i+1, vmon[i].volt, vmon[i].act_balance);
+	  if ((rtc.getEpoch() - vmon[i].mostrecent) <= old_message_time)  
+	    sprintf(outgoing_data.message, "WD%1d=%1d %2.3fV B%1d", i, i+1, vmon[i].volt, vmon[i].act_balance);
+	  else
+	    sprintf(outgoing_data.message, "WD%1d=%1d ??????????"", i, i+1);
 	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
 	}
       // d4 charger voltage
-      sprintf(outgoing_data.message, "WD4=%2.3fV ", charger_voltage);
+	if ((rtc.getEpoch() - charger.mostrecent) <= old_message_time)  
+	  sprintf(outgoing_data.message, "WD4=%2.3fV ", charger.voltage);
+	else
+	  sprintf(outgoing_data.message, "WD4=??????V ");
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
       
       //d5, charger current
-      sprintf(outgoing_data.message, "WD5=%2.3fA ", charger_current);
+      if ((rtc.getEpoch() - charger.mostrecent) <= old_message_time)  
+	sprintf(outgoing_data.message, "WD5=%2.3fA ", charger.current);
+      else 
+	sprintf(outgoing_data.message, "WD5=??????A ", charger.current);
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
       
       //d6 SOC
@@ -624,14 +649,81 @@ void loop (void)
 	}
       
       //D7 battery temp Vmon1
-      sprintf(outgoing_data.message, "WD7=BT=%2dC", vmon[0].battemp);
+      if ((rtc.getEpoch() - vmon[i].mostrecent) <= old_message_time)  
+	sprintf(outgoing_data.message, "WD7=BT=%2dC", vmon[0].battemp);
+      else 
+	sprintf(outgoing_data.message, "WD7=BT=??dC", vmon[0].battemp);
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
       last_display_update_time=rtc.getEpoch();
     }
-  
-  // FIXME do logic. maxv, setup start, transition from initial to topoff,
-  // transition from topoff to stopped, balance. 
+
+  // update charger state if its due
+  if (millis()  > (last_charger_state_update_time + charger_state_update_period))
+    {
+      if (State == Charger_not_init)
+	{
+	  set_psu_v(initial_charge_voltage);
+	  set_psu_i(initial_charge_current);
+	  set_psu_e(1);
+	  State = CC;
+	}
+      else if ((vmon[0].voltage > max_battery_voltage) ||(vmon[1].voltage > max_battery_voltage) ||
+	       (vmon[2].voltage > max_battery_voltage) ||(vmon[3].voltage > max_battery_voltage))
+	{ // a battery voltage is too high
+	  set_psu_e(0);              // turn off charger
+	  State = Done;
+	  soc  =  battery_capacity;  // set soc to max
+	  write_SOC(0, soc );
+	}
+      else if ((vmon[0].voltage < min_battery_voltage) ||(vmon[1].voltage < min_battery_voltage) ||
+	       (vmon[2].voltage < min_battery_voltage) ||(vmon[3].voltage < min_battery_voltage))
+	{ // a battery voltage is too low, set soc to 0% so beeping should start
+	  soc  =  0;
+	  write_SOC(0, soc );
+	}
+	       
+      else if ((State == CC) && (charger.current < transition_current))
+	{
+	  set_psu_v(topoff_charge_voltage);
+	  set_psu_i(topoff_charge_current);
+	  State = CV;
+	}
+      else if ((State == CV) && (charger.current < cutoff_current))
+	{
+	  set_psu_v(topoff_charge_voltage);
+	  set_psu_i(topoff_charge_current);
+	  set_psu_e(0);
+	  State = Done;
+	}
+      else if (State == CV)
+	{ // manage balance settings.
+	  
+	  
+
+	}
+      
+      last_charger_state_update_time = rtc.getEpoch();
+    }
+
+
+    
+  // FIXME logic has to:
+
+  // FIXED, NOT TESTED adjust the display for old information.
+  // FIXED, NOT TESTED at startup, set initial voltage and current and enable supply. 
+  // FIXED, NOT TESTED at transition voltage set final charger voltage and current
+  // when in transition mode, enable balance on batteries that are higher than the min
+  // FIXED, NOT TESTED if voltage gets too low on any battery, set SOC to 0.
+  // FIXED, NOT TESTED if SOC gets below 0, clamp to 0%.
+  // FIXED, NOT TESTED if any battery gets to max voltage disable supply and set SOC to 100%
+  // if current gets below end current, or things are balanced, set SOC to 100% and turn off supply
+  // FIXED, NOT TESTED at end (voltage?) turn off supply
+  // FIXED, NOT TESTED if SOC gets above 100%, clamp to 100%
+  // maybe later... adjust stored battery capacity on SOC unusual transitions.
+
 }
+
+/***** OK here are the subroutines   *************/
 
 void send_q_msg ( void)
 { 	  
@@ -694,12 +786,13 @@ void reinit_NVM (void)
   mcoPrefs.putFloat("tcv", 56.0);            // topoff charge voltage 14.0*4 = 56
   mcoPrefs.putFloat("tc",  3.0);             // transition current
   mcoPrefs.putFloat("fc",  0.3);             // final current
-  mcoPrefs.putFloat("mbv", 14.3);            // max single battery voltage
+  mcoPrefs.putFloat("maxbv", 14.3);          // max single battery voltage
+  mcoPrefs.putFloat("minbv", 11.5);          // min single battery voltage
   mcoPrefs.putFloat("bbv",  13.8);           // start balancing battery above this voltage 3.45 * 4 =13.8 
   mcoPrefs.putFloat("bbt",  0.005);          // battery balance tolerance
   mcoPrefs.putLong("bsoc",  36000000);       // beep SOC, 10%
   mcoPrefs.putLong("bcap", 360000000);       // battery capacity in mAS  100AH = 360e6 maS 
-
+  mcoPrefs.putULong("omt". 10);              // what defines an OLD message. in seconds.
   mcoPrefs.putBool("nvsInit", true);            // Create the "already initialized"
   //  key and store a value.
   // The "factory defaults" are created and stored so...
@@ -737,12 +830,14 @@ void load_operational_params(void)
    topoff_charge_voltage = mcoPrefs.getFloat("tcv");    // topoff charge voltage 14.0*4 = 56
    transition_current = mcoPrefs.getFloat("tc");        // transition current
    cutoff_current = mcoPrefs.getFloat("fc");            // final current
-   max_battery_voltage = mcoPrefs.getFloat("mbv");      // max single battery voltage
+   max_battery_voltage = mcoPrefs.getFloat("maxbv");    // max single battery voltage
+   min_battery_voltage = mcoPrefs.getFloat("minbv");    // min single battery voltage
    batt_balance_voltage = mcoPrefs.getFloat("bbv");     // start balancing a battery above this 3.45 * 4 =13.8
    batt_balance_tol_voltage = mcoPrefs.getFloat("bbt"); // battery balance tolerance
    beep_SOC = mcoPrefs.getLong("bsoc");                 // beep SOC, 10%
    battery_capacity = mcoPrefs.getLong("bcap");         // battery capacity in mAS  100AH = 360e6 maS 
    fbattery_capacity = (float) battery_capacity;
+   old_message_time  = mcoPrefs.getULong("omt");        // what defines an OLD message. in seconds.
    // All done. Last run state (or the factory default) is now restored.
    mcoPrefs.end();                                      // Close our preferences namespace.
 }
@@ -868,8 +963,8 @@ void parse_buf (char * in_buf)
 	  Serial.printf("current time %d %s\n", rtc.getEpoch(), rtc.getTime()); 
 	  break;
 	case 'c' :
-	  Serial.printf("charger voltage=%1.2f current=%1.3f enable=%d\n",
-			charger_voltage, charger_current, charger_enable); 
+	  Serial.printf("charger voltage=%1.2f current=%1.3f enable=%d updated  %d seconds ago \n",
+			charger.voltage, charger.current, charger.enable, rtc.getEpoch() - charger.mostrecent); 
 	  break;
 	case 's' :
 	  Serial.printf("SOC=%dmAS %2.1f%%\n", get_SOC(0), 100.0 * (float) get_SOC(0) / (float)battery_capacity);
@@ -907,8 +1002,8 @@ void parse_buf (char * in_buf)
 			psu_gain, psu_offset);
 	  break;
 	case 'B' :
-	  Serial.printf("Balance battery above %2.3fV Tolerance=%1.3fV Max voltage=%2.3fV\n",
-			batt_balance_voltage, batt_balance_tol_voltage, max_battery_voltage);
+	  Serial.printf("Balance battery above %2.3fV Tolerance=%1.3fV Max voltage=%2.3fV Min voltage=%2.3fV \n",
+			batt_balance_voltage, batt_balance_tol_voltage, max_battery_voltage, min_battery_voltage);
 	  break;
 	case 'E' :
 	  Serial.printf("Beep at or below SOC=%d mAS %d%%\n",
@@ -980,8 +1075,6 @@ void parse_buf (char * in_buf)
 	match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
 	soc  = (float) value * (float) battery_capacity / 100.0;
 	write_SOC(0, soc );
-	write_SOC(1, soc );
-	write_SOC(2, soc );
 	break;
       case  'I' :
 	match =  sscanf(in_buf, "%c%c%c=%f", &cmd, &field,&field2, &fvalue);
@@ -1047,8 +1140,10 @@ void parse_buf (char * in_buf)
 	  mcoPrefs.putFloat("bbv", fvalue);
 	else if (field2 == 'T') 
 	  mcoPrefs.putFloat("bbt", fvalue);
-	else if (field2 == 'M') 
-	  mcoPrefs.putFloat("mbv", fvalue);
+	else if (field2 == 'X') 
+	  mcoPrefs.putFloat("maxbv", fvalue);
+	else if (field2 == 'N') 
+	  mcoPrefs.putFloat("minbv", fvalue);
 	mcoPrefs.end();                              // Close the namespace
 	load_operational_params();
 	break;
@@ -1180,6 +1275,13 @@ uint32_t get_SOC (uint16_t address)
 }
 
 void write_SOC (uint16_t address, int32_t data)
+{ // write all 3 fram addresses
+  write_fram_SOC (address , data)
+  write_fram_SOC (address+1 , data)
+  write_fram_SOC (address+2 , data)
+}
+
+void write_fram_SOC (uint16_t address, int32_t data)
 {
   digitalWrite(fram_wp_pin, LOW);
   // fram.write32(address, data);
@@ -1232,16 +1334,16 @@ void parse_psu_wifi_buf (char * buf)
 	  if (matched==2) {
 	    if (cmdaddr == 30)
 	      //  Serial.printf("psu: meas_voltage=%d.%02dV\n", value/100, value % 100);  
-	      charger_voltage = psu_gain * (psu_offset+ (float) (value  / 100.0 ))  ;
+	      charger.voltage = psu_gain * (psu_offset+ (float) (value  / 100.0 ))  ;
 	    else if (cmdaddr == 31)
 	      //	      Serial.printf("psu: meas_current=%d.%03dA\n", value/1000, value % 1000);  
-	      charger_current = (float) value / 1000.0;
+	      charger.current = (float) value / 1000.0;
 	    else if (cmdaddr == 12)
 	      if (value == 0)
-		charger_enable = 0;
+		charger.enable = 0;
 		// Serial.print("psu: status=CV\n");
 	      else 
-		charger_enable = 1;
+		charger.enable = 1;
 	  }
 	}
     }
