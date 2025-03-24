@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-23 11:53:23 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-24 12:15:37 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -32,7 +32,7 @@
 // test vmon2 MAC (ME) is 5c013b660c9c   vmon # 2
 // test vmon3 MAC (ME) is 240ac4ee0360   vmon # 3 (smoked i2c with a spanenr. replaced soc.)
 // test vmon4 MAC (ME) is 5c013b6cea48   vmon # 4
-// test imon           is b8d61a5788d0
+// test imon           is 9c9c1fc6f7ac
 
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
@@ -117,7 +117,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 23 Mar 2025 Revb";
+const char * version = "MCO 24 Mar 2025 Reva";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -628,7 +628,7 @@ const uint8_t default_v1_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0x7d, 0x14 };
 const uint8_t default_v2_mac[]  = { 0x5c, 0x01, 0x3b, 0x66, 0x0c, 0x9c };
 const uint8_t default_v3_mac[]  = { 0x24, 0x0a, 0xc4, 0xee, 0x03, 0x60 };
 const uint8_t default_v4_mac[]  = { 0x5c, 0x01, 0x3b, 0x6c, 0xea, 0x48 };
-const uint8_t default_imon_mac[]  = { 0xb8, 0xd6, 0x1a, 0x57, 0x88, 0xd0 };
+const uint8_t default_imon_mac[]  = { 0x9c, 0x9c, 0x1f, 0xc6, 0xf7, 0xac };
 
 void reinit_NVM (void)
 {

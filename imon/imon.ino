@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'imon   Time-stamp: "2025-03-18 18:03:20 john"';
+// my $ver =  'imon   Time-stamp: "2025-03-24 14:29:45 john"';
 
 // this is the app to run an isolated voltage shunt resistor current probe
 // use tools -> board ->  ESP32 Dev module 
@@ -17,7 +17,8 @@
 */
 
 // test mco MAC is 5c013b6c6a44  
-// Im at     b8d61a5788d0
+// Im at     9c9c1fc6f7ac after replacing esp32
+
 
 
 #include <Preferences.h>  // the NV memory interface
@@ -43,7 +44,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "IMON WIFI 18 Mar 2025 Revb";
+const char * version = "IMON WIFI 24 Mar 2025 Revb";
 
 Preferences imonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -54,6 +55,7 @@ uint8_t cmt_mac[6];
 
 float   adc0;
 float   adcgain;
+bool nap;
 
 /* there are no IOs  */
 
@@ -68,6 +70,9 @@ uint32_t board_id;
 const uint32_t current_update_period = 250; // milliseconds.
 uint32_t last_current_update_time;
 
+uint32_t nap_us = current_update_period * 800; // nap for 80% of the time, and scale ms to us. Stay an integer.
+// uint32_t nap_us = 200000; 
+
 // create the wifi message struct
 
 typedef struct struct_message {
@@ -80,8 +85,20 @@ esp_now_peer_info_t peerInfo;
 // wifi callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
+      // nap here, as data has just been sent.
+  if (nap)
+    {
+      esp_wifi_stop();
+      esp_err_t result = esp_sleep_enable_timer_wakeup(nap_us);
+      esp_light_sleep_start();     // Enter light sleep
+      esp_wifi_start();
+      // note, napping is bad for the serial processing. If debugging serially, either reduce the nap time to ~50%
+      // of the sampe period, of just comment out these 4 lines above. Will just take the power dissipation
+      // of imon up to about 70mA at 12V with no napping. About half of that is the radio.
+      // probably about 1/4 of that with napping included.   Not a lot for imon to do while waiting to
+      // do the next current sample.
+    }
 }
-
 
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len)
@@ -94,6 +111,7 @@ void setup (void) {
   Serial.begin(115200);
   Serial.println(version);
 
+  nap = true;
   // init adc
   if(!adc.init()){
     Serial.println("ADS1115 not connected!");
@@ -163,8 +181,10 @@ void loop (void)
       current = get_current();
       snprintf(outgoing_data.message, sizeof(outgoing_data), "I=%1.3fA\n", current);
       esp_now_send(mco_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-      
+
       last_current_update_time = millis();
+
+
     }
 }
 
@@ -192,7 +212,7 @@ void reinit_NVM (void)
   //  our keys and store the initial "factory default" values.
 
   imonPrefs.putUInt("boardid", 1);           // boardID
-  imonPrefs.putFloat("adcgain", 1000.0/0.75);  // approx adc gain term 75mv/100A, 1A=0.75mv
+  imonPrefs.putFloat("adcgain", -1000.0/0.75);  // approx adc gain term 75mv/100A, 1A=0.75mv
   imonPrefs.putFloat("adc0", 0.0);             // adc 0 offset term
   imonPrefs.putBytes("cmtmac", default_cmt_mac, 6);  // mac address of tester
   imonPrefs.putBytes("mcomac", default_mco_mac, 6);  // mac address of mower comms controller 
@@ -231,12 +251,14 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   //         O adc offset
   //         V version
   //         i current current
+  //         n nap state
   // Wf Field,
   //    where Field could be B baud rate on S2
   //         A boardID
   //         G adc gain
   //         M[CO] Macs
   //         O adc offset
+  //         n=b nap enable
 
   uint8_t read_pointer = 0;
   uint8_t  cmd;
@@ -286,6 +308,9 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
       case 'i':
 	  snprintf(out_buf, out_buf_len, "current=%fA\n", get_current());
 	break;
+      case 'n' :
+	  snprintf(out_buf, out_buf_len, "nap=%d\n", nap);
+	  break ;	
       }
       break;
     
@@ -331,7 +356,13 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	imonPrefs.end();                              // Close the namespace
 	load_operational_params();
 	break;
-	
+
+      case 'n' :
+	if (value == 0)
+	  nap = false;
+	else
+	  nap = true;
+	break;
       }      
       break;
       // end of 'W'
