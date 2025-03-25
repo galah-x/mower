@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-23 14:15:20 john"';
+// my $ver =  'vmn   Time-stamp: "2025-03-25 13:36:23 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -346,33 +346,33 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 {
   // Z eraZe NV memory
   // Rf Read and print Field,
-  //    where Field could be
+  //    where Field could be   lower case comamnds tend to be immediate things, UPPER case is NVM
   //         A board address 1..4
   //         B baud rate on S2
   //         G adc gain
   //         H high balance temperature 
   //         L low balance temperature
   //         N nap and Nap_us
-  //         M Macs
+  //         M Mac addresses I know about
   //         O adc offset
   //         V version
-  //         b current balance requested setting
-  //         c current balance actual setting
-  //         v current voltage
-  //         r current resistor temperature
-  //         s current battery temperature
-  // Wf Field,
-  //    where Field could be B baud rate on S2
-  //         A board address 1..4
-  //         B baud rate on S2
-  //         G adc gain
-  //         H highbalance temperature 
-  //         L low balance temperature  
-  //         M[CO] Macs
-  //         NE=b   nap after poll, boolean enable
-  //         NT=d   nap time in uS
-  //         O adc offset
-  //         b balance               
+  //         b  balance requested setting
+  //         c  balance actual setting
+  //         v latest voltage
+  //         r  resistor latest temperature
+  //         s  battery latest temperature
+  // W%c[%c]=value,
+  //    where Field could be:     lower case comamnds tend to be immediate things, UPPER case is NVM
+  //         A=%d board address 1..4
+  //         B=%d baud rate on S2
+  //         G=%f adc gain
+  //         H=%d highbalance temperature 
+  //         L=%d low balance temperature  
+  //         M[CO]=%f Macs for mcO or Cmt
+  //         NE=b   nap after poll, a boolean enable
+  //         NT=d   nap time in uS. default 280,000us
+  //         O=%f adc offset
+  //         b=%b balance               
 
   uint8_t read_pointer = 0;
   uint8_t  cmd;

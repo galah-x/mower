@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-24 21:05:12 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-25 13:36:10 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -65,8 +65,9 @@ struct vmon_str
   uint32_t  mostrecent;     // timestamp of most recent volt message from device
   uint32_t  received;       // number of messages I've received from this board   
   uint32_t  sent;           // number of messages I've sent to this board
-  uint8_t   balance;        // should it be balancing?    filled in by a polled read
-  uint8_t   act_balance;    // is it balancing?
+  uint8_t   balance;        // should it be balancing     filled in by current battery voltage comparisons then
+                            //                           . polled send to vmons.
+  uint8_t   act_balance;    // is it balancing?            filled in by a polled read
   uint16_t  protocol_err;   // lets keep the struct aligned
   float     gain ;          // adc gain
   float     offset ;        // adc offset
@@ -134,23 +135,23 @@ uint8_t psu_mac[6];
 uint8_t mcc_mac[6];
 uint8_t cmt_mac[6];
 
-float   initial_charge_current;
-float   initial_charge_voltage;
-float   topoff_charge_current;
-float   topoff_charge_voltage;
-float   transition_current;
-float   cutoff_current;
-float   max_battery_voltage;
-float   min_battery_voltage; 
-float   batt_balance_voltage;
-float   batt_balance_tol_voltage;
+float    initial_charge_current;
+float    initial_charge_voltage;
+float    topoff_charge_current;
+float    topoff_charge_voltage;
+float    transition_current;
+float    cutoff_current;
+float    max_battery_voltage;
+float    min_battery_voltage; 
+float    batt_balance_voltage;
+float    batt_balance_tol_voltage;
 int32_t  battery_capacity;  //mA Seconds
-float  fbattery_capacity;  //mA Seconds
+float    fbattery_capacity;  //mA Seconds
 int32_t  beep_SOC;
-float   adc_gain;
-float   adc_offset;
-float   psu_gain;
-float   psu_offset;
+float    adc_gain;
+float    adc_offset;
+float    psu_gain;
+float    psu_offset;
 uint32_t old_message_time;
 
 struct charger_str
@@ -236,7 +237,7 @@ const uint16_t current_update_period = 1; // seconds.
 uint32_t       last_charger_state_update_time;     // time last charger state update happened , in seconds
 const uint16_t charger_state_update_period = 2; // seconds.
 
-enum CState{Charger_not_init, CC, CV, Done} State; 
+enum CState{Mowing, Charger_not_init, CC, CV, Done} State; 
 
 
 // FRAM fram;
@@ -264,10 +265,6 @@ uint32_t last_vmon_time=0;
 //const uint32_t vmon_period_millis = 1000 / vmon_ii_max ; // roughly 40 ms 
 const uint32_t vmon_period_millis = 2000 / vmon_ii_max ; // roughly 1s for testing
 
-// v is a voltage poll for the (which) channel.
-// r is a resistor temp read poll for the (which) channel.
-// s is a battery temp read poll for the (which) channel.
-// b is a balance state read poll for the (which) channel.
 bool suspend_vmon_polling = false;
 
 struct vpoll_str
@@ -341,17 +338,17 @@ void setup (void) {
       vq[i].qclaimed=0;
     }
 
-  // init vmon poll struct
+  // init the vmon polling management struct
   for (i=0; i<vmon_ii_max; i++)    // set which vmon to poll     ie the vmon poll address
 	vpoll[i].addr = i & 0x03;  // poll vmons in order 0,1,2,3,0,1,2,3 etc
-  for (i=0;i<0+4;i++)              
-    {                           // set what to poll in each of the 4 vmons
-      vpoll[i].letter    = 'v';  // first do a voltage poll for each vmon
-      vpoll[i+4].letter  = 'r';  // then do a resistor temp poll for each vmon
-      vpoll[i+8].letter  = 'v';  // then do another voltage poll for each vmon
-      vpoll[i+12].letter = 's';  // then do a battery temp poll for each vmon
-      vpoll[i+16].letter = 'v';  // then do another voltage poll for each vmon
-      vpoll[i+20].letter = 'b';  // then do a balance set poll for each vmon
+  for (i=0;i<vmons;i++)              
+    {                                 // set what to poll for each of the 4 vmons
+      vpoll[i].letter         = 'v';  // first do a read voltage  for each vmon
+      vpoll[i+  vmons].letter = 's';  // then do a read battery temp for each vmon
+      vpoll[i+2*vmons].letter = 'r';  // then do a read resistor temp for each vmon
+      vpoll[i+3*vmons].letter = 'v';  // then do another read voltage poll for each vmon
+      vpoll[i+4*vmons].letter = 'B';  // then do a write balance  for each vmon
+      vpoll[i+5*vmons].letter = 'b';  // then do a read actual balance state poll for each vmon, monitor for temp effects
     }
 
   // init charger structure
@@ -562,15 +559,14 @@ void loop (void)
       last_current_update_time = rtc.getEpoch();
     }
   
-  // update voltage from vmons if its due . update all about once per second
+  // perform vmon polling according to the management structure. update all about once per 2 seconds
   if (millis()  > (last_vmon_time + vmon_period_millis))
     {
 #ifdef MEAS_PERF
-      uint8_t vmon_jj;
-      vmon_jj = vmon_ii % 8; 
-      if (vmon_jj < 4) // its a pointer to a ordering structure, only an address for the first 4
+      // record the issue time of voltage polls
+      if (vmon.[vmon_ii].letter = 'v') 
 	{
-	  vmon_polltime[vmon_jj].issue = millis();
+	  vmon_polltime[vpoll[vmon_ii].addr].issue = millis();
 	}
 #endif
       if (vq[0].cmd_avail)
@@ -581,12 +577,15 @@ void loop (void)
 	  // anyone wanting to write to the queue has to check the q is empty first.
 	  send_q_msg();
 	}
-      else   // only increment vmon_ii command ring buffer is I sent one.
+      else   // only increment vmon_ii command ring buffer if I did a poll. not on queue interruption.
 	{
 	  if (suspend_vmon_polling == false)
 	    {
-	      sprintf(outgoing_data.message, "R%c\n",  vpoll[vmon_ii].letter);
-	      esp_now_send(vmon[vpoll[vmon_ii].addr].mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+	      if (vpoll[vmon_ii].letter == 'B') // the desired poll is a Balance write, all others are reads 
+		sprintf(outgoing_data.message, "Wb=%1d\n",  vmon[vpoll[vmon_ii].addr].balance );
+	      else 
+		sprintf(outgoing_data.message, "R%c\n",  vpoll[vmon_ii].letter);
+	      esp_now_send(vmon[vpoll[vmon_ii].addr].mac, (uint8_t *) &outgoing_data, strlen(outgoing_data.message)+1);
 	      
 	      // record that a message was sent on that channel
 	      vmon[vpoll[vmon_ii].addr].sent++;
@@ -624,7 +623,7 @@ void loop (void)
 	  if ((rtc.getEpoch() - vmon[i].mostrecent) <= old_message_time)  
 	    sprintf(outgoing_data.message, "WD%1d=%1d %2.3fV B%1d", i, i+1, vmon[i].volt, vmon[i].act_balance);
 	  else
-	    sprintf(outgoing_data.message, "WD%1d=%1d ??????????"", i, i+1);
+	    sprintf(outgoing_data.message, "WD%1d=%1d ??????????", i, i+1);
 	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
 	}
       // d4 charger voltage
@@ -660,28 +659,31 @@ void loop (void)
   // update charger state if its due
   if (millis()  > (last_charger_state_update_time + charger_state_update_period))
     {
-      if (State == Charger_not_init)
+      if ( (State == Mowing) && (digitalRead(charger_connected_pin)==1))
+	// hmmm, what about if I was mowing and now Im not.
+	State = Charger_not_init;
+      
+      if (digitalRead(charger_connected_pin)==0)
 	{
+	  State = Mowing;
+	  if ((vmon[0].volt < min_battery_voltage) ||(vmon[1].volt < min_battery_voltage) ||
+	      (vmon[2].volt < min_battery_voltage) ||(vmon[3].volt < min_battery_voltage))
+	    { // a battery voltage is too low, set soc to 0% so beeping should start
+	      soc  =  0;
+	      write_SOC(0, soc );
+	    }
+	}
+      // items below here mean the charger is plugged in. It may not necessarily be either turned on on nor enabled.
+      else if (State == Charger_not_init)
+	{ // as I don't know if the charger is actually on and listening, repeat this till  
 	  set_psu_v(initial_charge_voltage);
 	  set_psu_i(initial_charge_current);
 	  set_psu_e(1);
-	  State = CC;
+	  if (imon.current > (1.1*transition_current)) // charger is now actually charging...)
+	    {
+	      State = CC;
+	    }
 	}
-      else if ((vmon[0].voltage > max_battery_voltage) ||(vmon[1].voltage > max_battery_voltage) ||
-	       (vmon[2].voltage > max_battery_voltage) ||(vmon[3].voltage > max_battery_voltage))
-	{ // a battery voltage is too high
-	  set_psu_e(0);              // turn off charger
-	  State = Done;
-	  soc  =  battery_capacity;  // set soc to max
-	  write_SOC(0, soc );
-	}
-      else if ((vmon[0].voltage < min_battery_voltage) ||(vmon[1].voltage < min_battery_voltage) ||
-	       (vmon[2].voltage < min_battery_voltage) ||(vmon[3].voltage < min_battery_voltage))
-	{ // a battery voltage is too low, set soc to 0% so beeping should start
-	  soc  =  0;
-	  write_SOC(0, soc );
-	}
-	       
       else if ((State == CC) && (charger.current < transition_current))
 	{
 	  set_psu_v(topoff_charge_voltage);
@@ -690,36 +692,51 @@ void loop (void)
 	}
       else if ((State == CV) && (charger.current < cutoff_current))
 	{
-	  set_psu_v(topoff_charge_voltage);
-	  set_psu_i(topoff_charge_current);
 	  set_psu_e(0);
 	  State = Done;
 	}
       else if (State == CV)
 	{ // manage balance settings.
-	  
-	  
+	  // choose the smallest of the 4 battery voltages
+	  // any battery less than  batt_balance_voltage should not be balancing
+	  // any battery less than  smallest + batt_balance_tol_voltage should not be balancing
+	  // any battery > smallest + batt_balance_tol_voltage should be balancing
 
+	  // choose the smallest of the 4 battery voltages
+	  float lowest_battery_voltage = vmon[0].volt;
+	  int i;
+	  for (i=1; i<vmons; i++)
+	    if (vmon[i].volt < lowest_battery_voltage)
+	      lowest_battery_voltage = vmon[i].volt;
+
+	  // decide the voltage threshold above which balance should happen 
+	  float min_balance_battery_voltage = lowest_battery_voltage + batt_balance_tol_voltage;
+	  if  (min_balance_battery_voltage < batt_balance_voltage)
+	    min_balance_battery_voltage = batt_balance_voltage;
+
+	  // set balance condition for each battery according to its relationship to the balance threshold 
+	  for (i=0; i<vmons; i++)
+	    if (vmon[i].volt < min_balance_battery_voltage)
+	      vmon[i].balance = 0;
+	    else 
+	      vmon[i].balance = 1;
+	}
+
+      // check this whenever actually charging.
+      if ((State != Mowing) && ( (vmon[0].volt > max_battery_voltage) ||(vmon[1].volt > max_battery_voltage) ||
+				    (vmon[2].volt > max_battery_voltage) ||(vmon[3].volt > max_battery_voltage)))
+	{ // an individual battery voltage is too high
+	  set_psu_e(0);              // turn off charger
+	  State = Done;
+	  soc  =  battery_capacity;  // set soc to max
+	  write_SOC(0, soc );
 	}
       
       last_charger_state_update_time = rtc.getEpoch();
     }
 
-
-    
-  // FIXME logic has to:
-
-  // FIXED, NOT TESTED adjust the display for old information.
-  // FIXED, NOT TESTED at startup, set initial voltage and current and enable supply. 
-  // FIXED, NOT TESTED at transition voltage set final charger voltage and current
-  // when in transition mode, enable balance on batteries that are higher than the min
-  // FIXED, NOT TESTED if voltage gets too low on any battery, set SOC to 0.
-  // FIXED, NOT TESTED if SOC gets below 0, clamp to 0%.
-  // FIXED, NOT TESTED if any battery gets to max voltage disable supply and set SOC to 100%
-  // if current gets below end current, or things are balanced, set SOC to 100% and turn off supply
-  // FIXED, NOT TESTED at end (voltage?) turn off supply
-  // FIXED, NOT TESTED if SOC gets above 100%, clamp to 100%
-  // maybe later... adjust stored battery capacity on SOC unusual transitions.
+  // 
+  // and maybe later... adjust stored battery capacity on SOC unusual transitions.
 
 }
 
@@ -792,7 +809,7 @@ void reinit_NVM (void)
   mcoPrefs.putFloat("bbt",  0.005);          // battery balance tolerance
   mcoPrefs.putLong("bsoc",  36000000);       // beep SOC, 10%
   mcoPrefs.putLong("bcap", 360000000);       // battery capacity in mAS  100AH = 360e6 maS 
-  mcoPrefs.putULong("omt". 10);              // what defines an OLD message. in seconds.
+  mcoPrefs.putULong("omt", 10);              // what defines an OLD message. in seconds.
   mcoPrefs.putBool("nvsInit", true);            // Create the "already initialized"
   //  key and store a value.
   // The "factory defaults" are created and stored so...
@@ -865,7 +882,7 @@ void parse_buf (char * in_buf)
   // Wf Field,
   //    where Field could be (volatile stuff in lower case)
   //          Mx mac    WMP=<12 ascii hex digits>  mac for Psu or Mcc or Cmt
-  //          bn=[01] switch balance on board 1..4 to given level 
+  //          bn=[01] switch balance on board 1..4 to given level. this is sent by a poll, and updated by loop() 
   //          cv=f    charger voltage   set psu V
   //          ci=f    charger current   set psu I
   //          ce=b   charger enable    set pse e
@@ -1025,10 +1042,8 @@ void parse_buf (char * in_buf)
 	match =  sscanf(in_buf, "%c%c%c=%d", &cmd, &field, &field2, &value);
 	if (match == 4)
 	  {
-	    // Serial.printf("doing enable=%d board %c\n", value, field2);
 	    field2 = (field2 -1) & 0x03; // map 1..4 to 0..3
-	    snprintf(out_buf, out_buf_len, "Wb=%1d\n", value);    // generate q cmd string for a write balance  
-	    write_vmon_wq(field2, out_buf, strlen(out_buf)+1);
+	    vmon[field2].balance = value;
 	  }
 	break;
 
@@ -1276,9 +1291,9 @@ uint32_t get_SOC (uint16_t address)
 
 void write_SOC (uint16_t address, int32_t data)
 { // write all 3 fram addresses
-  write_fram_SOC (address , data)
-  write_fram_SOC (address+1 , data)
-  write_fram_SOC (address+2 , data)
+  write_fram_SOC (address , data);
+  write_fram_SOC (address+1 , data);
+  write_fram_SOC (address+2 , data);
 }
 
 void write_fram_SOC (uint16_t address, int32_t data)
