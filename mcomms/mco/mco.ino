@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-31 20:13:12 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-31 20:52:58 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -30,7 +30,7 @@
 // test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController
 // test vmon1 MAC (ME) is 5c013b6c7d14   vmon # 1
 // test vmon2 MAC (ME) is 5c013b660c9c   vmon # 2
-// test vmon3 MAC (ME) is 240ac4ee0360   vmon # 3 (smoked i2c with a spanenr. replaced soc.)
+// test vmon3 MAC (ME) is 240ac4ee0360   vmon # 3 (smoked i2c with a spanner. replaced soc.)
 // test vmon4 MAC (ME) is 5c013b6cea48   vmon # 4
 // test imon           is 9c9c1fc6f7ac
 
@@ -643,7 +643,7 @@ void loop (void)
       //d6 SOC
       if (battery_capacity > 0) 
 	{
-	  sprintf(outgoing_data.message, "WD6=SOC=%2d%%",get_SOC(0)/battery_capacity);
+	  sprintf(outgoing_data.message, "WD6=SOC=%2d%%", (int16_t) ((100.0 * soc)/battery_capacity));
 	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
 	}
       
