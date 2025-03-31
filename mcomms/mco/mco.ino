@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-25 13:36:10 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-31 20:13:12 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -126,7 +126,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 24 Mar 2025 Revb";
+const char * version = "MCO 31 Mar 2025 Rev1";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -648,7 +648,7 @@ void loop (void)
 	}
       
       //D7 battery temp Vmon1
-      if ((rtc.getEpoch() - vmon[i].mostrecent) <= old_message_time)  
+      if ((rtc.getEpoch() - vmon[0].mostrecent) <= old_message_time)  
 	sprintf(outgoing_data.message, "WD7=BT=%2dC", vmon[0].battemp);
       else 
 	sprintf(outgoing_data.message, "WD7=BT=??dC", vmon[0].battemp);
@@ -870,6 +870,7 @@ void parse_buf (char * in_buf)
   //          t current time
   //          c scaled charger voltage, current, enable
   //          s SOC
+  //          st state
   //          M Show macs
   //          V=version
   //          I=initial charge current, voltage
@@ -919,7 +920,7 @@ void parse_buf (char * in_buf)
   char     out_buf[out_buf_len];
   int      match ;
   int      i;
-  uint32_t soc;
+  int32_t soc;
   uint32_t time1;
   uint32_t time2;
   
@@ -983,8 +984,12 @@ void parse_buf (char * in_buf)
 	  Serial.printf("charger voltage=%1.2f current=%1.3f enable=%d updated  %d seconds ago \n",
 			charger.voltage, charger.current, charger.enable, rtc.getEpoch() - charger.mostrecent); 
 	  break;
-	case 's' :
-	  Serial.printf("SOC=%dmAS %2.1f%%\n", get_SOC(0), 100.0 * (float) get_SOC(0) / (float)battery_capacity);
+	case 's' : // FIXME enum CState{} State; 
+
+	  if (inbuf[2] == 't')
+	    Serial.printf("State=%d   (Mowing, Charger_not_init, CC, CV, Done) \n", State);
+	  else 
+	    Serial.printf("SOC=%dmAS %2.1f%%\n", get_SOC(0), 100.0 * (float) get_SOC(0) / (float)battery_capacity);
 	  break;
 	case 'M':
 	  Serial.printf("MCO_MAC=%02x%02x%02x%02x%02x%02x PSU=%02x%02x%02x%02x%02x%02x MCC=%02x%02x%02x%02x%02x%02x CMT=%02x%02x%02x%02x%02x%02x\n",
@@ -1338,6 +1343,7 @@ void parse_psu_wifi_buf (char * buf)
       if ((buf[3]=='o') && (buf[4]=='k'))
 	{ // typical write response.
 	  //	  Serial.println("psu: ok");
+	  charger.mostrecent = rtc.getEpoch{};
 	}
       else if (buf[3]=='r')
 	{ // general read handler
@@ -1346,19 +1352,21 @@ void parse_psu_wifi_buf (char * buf)
 	  int matched;
 	  matched = sscanf(buf, ":01r%2d=%d.", &cmdaddr, &value);
 	  //	  Serial.printf("%s matched=%d addr=%d val=%d\n", buf, matched, cmdaddr, value);
-	  if (matched==2) {
-	    if (cmdaddr == 30)
-	      //  Serial.printf("psu: meas_voltage=%d.%02dV\n", value/100, value % 100);  
-	      charger.voltage = psu_gain * (psu_offset+ (float) (value  / 100.0 ))  ;
-	    else if (cmdaddr == 31)
-	      //	      Serial.printf("psu: meas_current=%d.%03dA\n", value/1000, value % 1000);  
-	      charger.current = (float) value / 1000.0;
-	    else if (cmdaddr == 12)
-	      if (value == 0)
-		charger.enable = 0;
-		// Serial.print("psu: status=CV\n");
-	      else 
-		charger.enable = 1;
+	  if (matched==2)
+	    {
+	      if (cmdaddr == 30)
+		//  Serial.printf("psu: meas_voltage=%d.%02dV\n", value/100, value % 100);  
+		charger.voltage = psu_gain * (psu_offset+ (float) (value  / 100.0 ))  ;
+	      else if (cmdaddr == 31)
+		//	      Serial.printf("psu: meas_current=%d.%03dA\n", value/1000, value % 1000);  
+		charger.current = (float) value / 1000.0;
+	      else if (cmdaddr == 12)
+		if (value == 0)
+		  charger.enable = 0;
+	      // Serial.print("psu: status=CV\n");
+		else 
+		  charger.enable = 1;
+	      charger.mostrecent = rtc.getEpoch{};
 	  }
 	}
     }
