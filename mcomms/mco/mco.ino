@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-31 20:52:58 john"';
+// my $ver =  'mco  Time-stamp: "2025-03-31 21:12:22 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -1268,7 +1268,7 @@ void set_psu_i(float current)
 {
   suspend_psu_polling=true;
   delay(30);
-  sprintf(outgoing_data.message, ":01w11=%05d,\n", (int ) 1000.0 * current);
+  sprintf(outgoing_data.message, ":01w11=%05d,\n", (int32_t ) 1000.0 * current);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
   suspend_psu_polling=false;
   delay(30);
