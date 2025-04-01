@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-04-02 10:04:16 john"';
+// my $ver =  'mcc  Time-stamp: "2025-04-02 10:20:11 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -44,7 +44,7 @@
 #include "SD.h"            // SD apparently uses ram more effectively than SDFat
 #include "SPI.h"           // SPI access to sd card
 
-#define DEBUG
+// #define DEBUG
 
 // for preferences
 #define RW_MODE false
@@ -102,17 +102,20 @@ struct_message response_data;
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&response_data, incomingData, sizeof(response_data));
+#ifdef DEBUG
   Serial.print("received ");
   Serial.print(len);
   Serial.print(" bytes from ");  
   Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
   /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
      fields 12 to 17 seem to be the source MAC. rest isn't obvious */
-
+#endif
   parse_buf(response_data.message, return_buf, msgbuflen);
+#ifdef DEBUG
   Serial.print("parsed responded: ");
   Serial.printf("%s", return_buf);
   Serial.printf((char *) response_data.message);
+#endif
   //** return return_buf to requestor here **
 
   strncpy((char *)response_data.message, (char *) return_buf, msgbuflen);
@@ -780,15 +783,15 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 	mccPrefs.end();                              // Close the namespace
 	load_operational_params();
 	break;
+
+      case 'T': // truncate logfile
+	open_logfile(true, false);  // truncate logfile, dont justify.
+	close_logfile();            // flush that to the system
+	break;
+
+	// end of 'W'
       }      
     break;
-
-  case 'T': // truncate logfile
-    open_logfile(true, false);  // truncate logfile, dont justify.
-    close_logfile();            // flush that to the system
-    break;
-    
-    // end of 'W'
   }    
 }
 
