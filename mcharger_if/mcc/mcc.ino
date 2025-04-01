@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-04-01 17:53:58 john"';
+// my $ver =  'mcc  Time-stamp: "2025-04-02 10:04:16 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -14,17 +14,19 @@
    It gets instructed by the MCO in the mower as to what to do.
    The model where I can control it either serially from the esp32 debug terminal, or using
    the same commands across esp_now from the MCO seems to work ok for test + development. */
-// NB, logging now writes in 4K chunks to minimize RmodifyW delays as part of locating logging
-//     crazy 10s delays. Which were predominately a broken ESP32Time when Time wasn't set to > year 1980.   
-//     Should help CDcard wear levelling no end also. Downside is you need to use the UI to turn
-//     off logging (which flushes then closes the file) prior to power down if you want
-//     the last ~~10 minutes of logs.
-//     The 4k write seems to take 40ms. hopefully thats not generally noticeable.
 
-// test cmt MAC is 5c013b6c9938
-// test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
-// test psu MAC is       wifi to serial adapter for the power supply. Originally a vichy mm adaptor
-// test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController
+/* NB, logging now writes in 4K chunks to minimize RmodifyW delays as part of locating logging
+     crazy 10s delays. Which were predominately a broken ESP32Time when Time wasn't set to > year 1980.   
+     Should help CDcard wear levelling no end also. Downside is you need to use the UI to turn
+     off logging (which flushes then closes the file) prior to power down if you want
+     the last ~~10 minutes of logs.
+     The 4k write seems to take 40ms. hopefully thats not generally noticeable.
+     Going to change the default logfile state to closed  as stuff keeps going missing. */
+
+/* test cmt MAC is 5c013b6c9938
+   test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
+   test psu MAC is       wifi to serial adapter for the power supply. Originally a vichy mm adaptor
+   test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController */
 
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
@@ -177,8 +179,8 @@ const unsigned long temp_update_period = 10; // seconds.
 unsigned long last_psu_update_time;         // time last power supply voltage and current was polled at
 const unsigned long psu_update_period = 2;  // seconds.
 
-// logfile flushes when the buffer is full.
-// Manually flush via UI on termination if last fragment of log is wanted.
+// logfile gets written from buffer  when the buffer is full.
+// Manually flush via UI on termination if the last fragment of log is wanted.
 
 // create lcd object
 hd44780_I2Cexp lcd;
@@ -307,7 +309,10 @@ void setup (void) {
     sdbuf_ptr=0;
     
     if (logging)
-      open_logfile(false, true); // truncate, justify
+      {
+	open_logfile(false, true); // truncate, justify
+	close_logfile();
+      }
 }
 
    
@@ -486,6 +491,8 @@ void do_menu_1 (void)  // log menu
 	      // turn off logging
 	      logging=0;
 	      show_menu=1;
+	      open_logfile(false, false);
+	      flush();
 	      close_logfile();
 	    }
 	  else
@@ -493,12 +500,14 @@ void do_menu_1 (void)  // log menu
 	      // turn on logging
 	      logging=1;
 	      show_menu=1;
-	      open_logfile(false, true); // truncate, justify
+	      //open_logfile(false, true); // truncate, justify
 	    }
 	}
       if (menu_line == 2) // truncate logfile
 	{
-	  file.seek(0);
+	  open_logfile(true, false);
+	  close_logfile();
+	  //file.seek(0);
 	  sdbuf_ptr=0;
 	}
     }
@@ -597,7 +606,7 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
   uint8_t  field;
   uint8_t  field2;
   uint8_t field3;
-  int      value;
+  int32_t  value;
   uint8_t  mvalue[6]; // mac address
   uint8_t  msg[21];   // 20 chars and 0 terminator
   char     logmsg[30]; // for building logging messages
@@ -617,10 +626,11 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
       {
       case 'B': // logfile block, start address in hex
 	match =  sscanf((char *) in_buf, "RB=%x", &value);
-	close_logfile();
+	// close_logfile();
 	file = SD.open(logfile, FILE_READ);
 	file.seek(value);
 	file.read(out_buf, out_buf_len / 2);
+	close_logfile();
 	// map bytes to a pair of ascii digits. Start with half a buf, and map from the half way point to the top.
 	// work to the start of the buffer
 	int i;
@@ -667,7 +677,10 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 		 );
 	break;
       case 'S': // logfile length
-	snprintf((char *)out_buf, out_buf_len, "Logfile=%d\n", file.size());
+	open_logfile(false, false);
+	value = file.size();
+	close_logfile();
+	snprintf((char *)out_buf, out_buf_len, "Logfile=%d\n", value);
 	break;
 	
       case 'T':
@@ -771,10 +784,8 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
     break;
 
   case 'T': // truncate logfile
-    close_logfile();
     open_logfile(true, false);  // truncate logfile, dont justify.
     close_logfile();            // flush that to the system
-    open_logfile(true, false);  // truncate logfile, dont justify.
     break;
     
     // end of 'W'
@@ -827,7 +838,6 @@ void logger (char*message)
 // open file for write. 
 void openFile(fs::FS &fs, const char *path) {
   Serial.printf("Opening file: %s\n", path);
-  //  file = fs.open(path, FILE_WRITE);      // open at end of current file
   file = fs.open(path, FILE_APPEND);      // open at end of current file
   if (!file) {
     Serial.println("Failed to open file for write");
@@ -857,14 +867,16 @@ void appendtoFile(char *message) {
     { 
       memcpy(sdbuf + sdbuf_ptr, msg, msize);
       sdbuf_ptr= 0;
+      open_logfile(false, false);
       file.write(sdbuf, sdblksize);                   // write seems to take about 40ms.
-      file.flush();
+      close_logfile();
     }
   else // msg would overfill the buffer
     {
       memcpy(sdbuf + sdbuf_ptr, msg, buf_remaining);  // put first part of message that fits into buffer end
+      open_logfile(false, false);
       file.write(sdbuf, sdblksize);                   // write out the complete buffer to SD
-      file.flush();
+      close_logfile();
       sdbuf_ptr = msize-buf_remaining;                // set pointer to after the remaining fragment
       memcpy(sdbuf, msg+buf_remaining, sdbuf_ptr);    // copy the remaining message fragment
     }                                                 // to the start of the buffer for next time

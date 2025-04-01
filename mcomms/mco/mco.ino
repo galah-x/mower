@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-01 11:05:38 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-02 09:11:27 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -126,7 +126,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 31 Mar 2025 Rev1";
+const char * version = "MCO 2 Apr 2025 Rev1";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -643,15 +643,15 @@ void loop (void)
       //d6 SOC
       if (battery_capacity > 0) 
 	{
-	  sprintf(outgoing_data.message, "WD6=SOC=%2d%%", (int16_t) ((100.0 * soc)/battery_capacity));
+	  sprintf(outgoing_data.message, "WD6=SOC=%2d%%", (int16_t) ((100.0 * (float) soc)/(float) battery_capacity));
 	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
 	}
       
       //D7 battery temp Vmon1
       if ((rtc.getEpoch() - vmon[0].mostrecent) <= old_message_time)  
-	sprintf(outgoing_data.message, "WD7=BT=%2dC", vmon[0].battemp);
+	sprintf(outgoing_data.message, "WD7=S%1d %2dC", State, vmon[0].battemp);
       else 
-	sprintf(outgoing_data.message, "WD7=BT=??dC", vmon[0].battemp);
+	sprintf(outgoing_data.message, "WD7=S%1d?%2dC", State, vmon[0].battemp);
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
       last_display_update_time=rtc.getEpoch();
     }
