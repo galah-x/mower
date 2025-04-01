@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 #    -*- Mode: cperl     -*-
 # emacs automagically updates the timestamp field on save
-# my $ver =  'get_logfile   Time-stamp: "2025-04-01 11:00:05 john"';
+# my $ver =  'get_logfile   Time-stamp: "2025-04-01 11:41:58 john"';
 
 # this script gets a logfile from mcc
 # it expects to find a cmt plugged in to a usb port.
@@ -24,7 +24,7 @@ my $truncate =1;  # truncate logfile after reading.
 my $msgbuflen = 128;
 
 &GetOptions (
-	     'mccport=s',    \$mccport,
+	     'cmtport=s', \$cmtport,
 	     'baud=s',    \$baud,
 	     'tr=d',      \$truncate,
 	     'msg=d',     \$msgbuflen
@@ -52,14 +52,14 @@ my $l;
 
 for (my $i=0; $i < $length; $i += $msgbuflen)
   {
-      printf $handle ("RB=%x\n", $i);
+      printf $handle ("m1RB=%x\n", $i);
       $l = &get_serial_line($handle);
       print $lh $l;
     }
 
 if ($truncate)
   {
-      printf $handle ("WT\n", $i);
+      printf $handle ("m1WT\n", $i);
     }
 
 
@@ -72,7 +72,7 @@ sub get_logfile_len
 {
   if (my $n=  &empty_serial_line($handle)) {
     print "read_v emptied $n\n";}
-  printf $handle ("RS\n");
+  printf $handle ("m1RS\n");
   my $l  = &get_serial_line($handle);
   printf "read_v %s\n", $l;
   $l =~ /ogfile=([\d]+)/;
@@ -80,17 +80,6 @@ sub get_logfile_len
 }
 
 
-sub disable_polling
-{
-  printf $handle ("Wp=0\n");
-  sleep 1;
-}
-
-sub enable_polling
-{
-  printf $handle ("Wp=1\n");
-  sleep 1;
-}
 
 
 
