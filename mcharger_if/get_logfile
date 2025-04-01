@@ -1,0 +1,227 @@
+#!/usr/bin/perl -w
+#    -*- Mode: cperl     -*-
+# emacs automagically updates the timestamp field on save
+# my $ver =  'get_logfile   Time-stamp: "2025-04-01 11:00:05 john"';
+
+# this script gets a logfile from mcc
+# it expects to find a cmt plugged in to a usb port.
+
+
+# logging
+
+use strict;
+use  Getopt::Long;
+use POSIX qw(strftime);
+use POSIX qw(:termios_h);
+use IO::Handle;
+use Fcntl qw( O_RDONLY O_RDWR O_NOCTTY);
+
+my $cmtport = "/dev/ttyUSB0";
+my $logfile = "mcc.log";
+my $baud = 115200;
+my $lh;
+my $truncate =1;  # truncate logfile after reading.
+my $msgbuflen = 128;
+
+&GetOptions (
+	     'mccport=s',    \$mccport,
+	     'baud=s',    \$baud,
+	     'tr=d',      \$truncate,
+	     'msg=d',     \$msgbuflen
+);
+
+(my $handle, my $success) = &openserial($mcoport,$baud);
+print "open serial success=$success\n" if ($success !=1);
+
+# handle interrupt more cleanly, by closing logfile prior to exit. which should flush it.
+$SIG{INT} = sub { close $lh; die "close logfile and exit\n";};
+$SIG{TERM} = sub { close $lh; die "close logfile and exit\n";};
+
+
+$lh = &open_logfile();
+
+if (my $n=  &empty_serial_line($handle)) {
+    print "start emptied $n\n";}
+printb("disable then enable polling\n");
+
+
+my $length = &get_logfile_len();
+printf("Logfile length is %d\n", $length);
+
+my $l;
+
+for (my $i=0; $i < $length; $i += $msgbuflen)
+  {
+      printf $handle ("RB=%x\n", $i);
+      $l = &get_serial_line($handle);
+      print $lh $l;
+    }
+
+if ($truncate)
+  {
+      printf $handle ("WT\n", $i);
+    }
+
+
+
+close($lh);
+closeserial($handle);
+
+
+sub get_logfile_len
+{
+  if (my $n=  &empty_serial_line($handle)) {
+    print "read_v emptied $n\n";}
+  printf $handle ("RS\n");
+  my $l  = &get_serial_line($handle);
+  printf "read_v %s\n", $l;
+  $l =~ /ogfile=([\d]+)/;
+  return $1;
+}
+
+
+sub disable_polling
+{
+  printf $handle ("Wp=0\n");
+  sleep 1;
+}
+
+sub enable_polling
+{
+  printf $handle ("Wp=1\n");
+  sleep 1;
+}
+
+
+
+
+
+sub openserial { 
+    my $port = shift;
+    my $baud = shift;
+
+    # Used to control serial line discipline et cetera
+    my $term;
+    my $cflag=0;
+    # Files etc
+    my ($fd_tty);
+    my $handle;
+    my $success = sysopen($handle, $port, O_RDWR | O_NOCTTY );
+    # See perlfaq8 for details on how the following ioctl's are done 
+    $handle->autoflush(1);
+    $fd_tty = fileno($handle);
+    $term = POSIX::Termios->new();
+    $term->getattr($fd_tty) || die("Failed getattr on tty_in: $!");
+
+   # Set baudrate
+    #    $cflag |= &B38400;
+    $cflag |= (CS8 | CSTOPB ); # 2 stop bits
+    $term->setlflag(0); # Have to have no echo for this to work
+    $term->setiflag( 0);
+    $term->setoflag( 0);
+    $term->setcflag($cflag |  CLOCAL | CREAD );  # local disables modem control
+    $term->setcc(VMIN, 50); 
+    $term->setcc(VTIME, 5); 
+
+    $term->setospeed(&mapbaud($baud));
+    $term->setispeed(&mapbaud($baud));
+    #    printf "getospeed returns %d\n", $term->getospeed;
+    $term->setattr($fd_tty, TCSANOW) || die "Failed setattr tty in : $!";
+    return ($handle,$success);
+}
+
+
+sub get_serial_line
+{
+  my $handle = shift;
+  return <$handle>;
+}
+
+sub empty_serial_line
+{
+  my $buffer;
+  #  my $n;
+  my $handle = shift;
+  #  while($n=sysread($handle,$buffer, 1024))
+  #    {
+  #     printf "emptied %d chars\n", $n;
+  #  }
+  my $readlen =0;
+  while ( poll($handle) )
+    {
+      $readlen += read( $handle , $buffer , 1 );
+    }
+  return $readlen;
+}
+
+sub poll {
+    my ($fh) = @_;
+    my $in = '';
+    vec($in,fileno($fh),1) = 1;
+    return select($in,undef,undef,0);
+}
+
+
+sub mapbaud {
+    my $ret = 13; # 9600 default 
+    my $baud = shift;
+    if ($baud == 1200) {
+        $ret = 9;
+    } elsif ($baud == 1800) {
+        $ret = 10;
+    } elsif ($baud == 2400) {
+        $ret = 11;
+    } elsif ($baud == 4800) {
+        $ret = 12;
+    } elsif ($baud == 9600) {
+        $ret = 13;
+    } elsif ($baud == 19200) {
+        $ret = 14;
+    } elsif ($baud == 38400) {
+        $ret = 15;
+   } elsif ($baud == 57600) {
+        $ret = 4097;
+    } elsif ($baud == 115200) {
+        $ret = 4098;
+    } elsif ($baud == 230400) {
+        $ret = 4099;
+    } elsif ($baud == 460800) {
+        $ret = 4100;
+    } elsif ($baud == 500000) {
+        $ret = 4101;
+    } elsif ($baud == 576000) {
+        $ret = 4102;
+    } elsif ($baud == 921600) {
+        $ret = 4103;
+    } elsif ($baud == 1000000) {
+        $ret = 4104;
+    } elsif ($baud == 1152000) {
+        $ret = 4105;
+    } elsif ($baud == 2000000) {
+        $ret = 4107;
+    } elsif ($baud == 2500000) {
+       $ret = 4109;
+    } elsif ($baud == 3500000) {
+        $ret = 4110;
+    } elsif ($baud == 4000000) {
+        $ret = 4111;
+    }
+    return $ret;
+}
+ 
+
+sub  open_logfile  # for append
+{
+  open($lh, ">>", $logfile) or die "Could not open logfile $logfile for append $!";
+  $lh->autoflush(1);
+  return $lh;
+}
+
+
+sub closeserial {
+  close shift;
+}
+
+
+
+

@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-03-31 21:12:22 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-01 11:05:38 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -986,7 +986,7 @@ void parse_buf (char * in_buf)
 	  break;
 	case 's' : // FIXME enum CState{} State; 
 
-	  if (inbuf[2] == 't')
+	  if (in_buf[2] == 't')
 	    Serial.printf("State=%d   (Mowing, Charger_not_init, CC, CV, Done) \n", State);
 	  else 
 	    Serial.printf("SOC=%dmAS %2.1f%%\n", get_SOC(0), 100.0 * (float) get_SOC(0) / (float)battery_capacity);
@@ -1343,7 +1343,7 @@ void parse_psu_wifi_buf (char * buf)
       if ((buf[3]=='o') && (buf[4]=='k'))
 	{ // typical write response.
 	  //	  Serial.println("psu: ok");
-	  charger.mostrecent = rtc.getEpoch{};
+	  charger.mostrecent = rtc.getEpoch();
 	}
       else if (buf[3]=='r')
 	{ // general read handler
@@ -1366,7 +1366,7 @@ void parse_psu_wifi_buf (char * buf)
 	      // Serial.print("psu: status=CV\n");
 		else 
 		  charger.enable = 1;
-	      charger.mostrecent = rtc.getEpoch{};
+	      charger.mostrecent = rtc.getEpoch();
 	  }
 	}
     }
