@@ -1,27 +1,31 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-02 09:11:27 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-02 10:44:41 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
 
-/* mco
-   can can talk to the power supply to adjust current and voltage settings.
-
-   mco is responsible for talking to the 4 vmons.
-   And, directly or indirectly, psu.
+/* mco is responsible for talking to the 4 vmons.
+   And, directly,  psu.  to adjust current and voltage settings.
    It has to report all relevant loggable info to mcc.
-   It has to get the info from vmons. It runs this.
+   It has to get the info from vmons. It runs all this.
 
-   Locally, mco has access to the current into/out of the batteries via current shunt and adc
-   It intergates this to get SOC.
-   It zeros SOC on empty, adjusting the battery capacity measure when that happens.
-   It 100%s SOC on full, adjusting the battery capacity measure when that happens.
-   It beeps on empty when battery empty && not_charging
-   it records SOC in local fram. multiple copies most likely.
+   Locally, mco WAS SUPPOSED to have access to the current into/out of the batteries via current shunt and adc
+   but my design was broken, the adc doesn't do bipolar inputs which the design needed.
+   Now there is an imon board, with the same type adc on an isolated supply rail board, the shunt is biassed
+   to mid rail. Data gets to mco via wifi, just like everything else.
+   
+   MCO integrates current to get SOC.
+   It zeros SOC on empty, one day adjusting the battery capacity measure when that happens.
+   It 100%s SOC on full, one day adjusting the battery capacity measure when that happens.
+   It beeps  when battery SOC at ~10% && not_charging
+   it records SOC in local fram.  3 copies currently.
 
-   beeper
-   then the core logic.
+   It controls power supply settings on charge to implement a main charge CC phase transitioning to CV as
+   current drops below the preset max current. When current falls enough, switches state to a higher
+   voltage, lower current setting for a topoff phase, where the balancers can kick in and make a significant
+   effect.
+   When current is low enough, or individual battery voltage high enough, it all stops.
 */
 
 // test cmt MAC is 5c013b6c9938
