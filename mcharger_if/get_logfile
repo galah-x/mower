@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 #    -*- Mode: cperl     -*-
 # emacs automagically updates the timestamp field on save
-# my $ver =  'get_logfile   Time-stamp: "2025-04-01 11:41:58 john"';
+# my $ver =  'get_logfile   Time-stamp: "2025-04-01 18:13:30 john"';
 
 # this script gets a logfile from mcc
 # it expects to find a cmt plugged in to a usb port.
@@ -15,8 +15,8 @@ use POSIX qw(strftime);
 use POSIX qw(:termios_h);
 use IO::Handle;
 use Fcntl qw( O_RDONLY O_RDWR O_NOCTTY);
-
-my $cmtport = "/dev/ttyUSB0";
+use Time::HiRes qw(usleep);
+my $cmtport = "/dev/ttyUSB2";
 my $logfile = "mcc.log";
 my $baud = 115200;
 my $lh;
@@ -26,11 +26,11 @@ my $msgbuflen = 128;
 &GetOptions (
 	     'cmtport=s', \$cmtport,
 	     'baud=s',    \$baud,
-	     'tr=d',      \$truncate,
-	     'msg=d',     \$msgbuflen
+	     'tr=n',      \$truncate,
+	     'msg=n',     \$msgbuflen
 );
 
-(my $handle, my $success) = &openserial($mcoport,$baud);
+(my $handle, my $success) = &openserial($cmtport,$baud);
 print "open serial success=$success\n" if ($success !=1);
 
 # handle interrupt more cleanly, by closing logfile prior to exit. which should flush it.
@@ -42,24 +42,32 @@ $lh = &open_logfile();
 
 if (my $n=  &empty_serial_line($handle)) {
     print "start emptied $n\n";}
-printb("disable then enable polling\n");
 
 
 my $length = &get_logfile_len();
 printf("Logfile length is %d\n", $length);
 
 my $l;
+my $m;
 
-for (my $i=0; $i < $length; $i += $msgbuflen)
+for (my $i=0; $i < $length; $i += $msgbuflen/4)
   {
-      printf $handle ("m1RB=%x\n", $i);
-      $l = &get_serial_line($handle);
-      print $lh $l;
-    }
+    printf "requesting at 0x%x\n", $i;
+    printf $handle ("m1RB=%x\n", $i);
+    # usleep(500000);
+    $l =  &get_serial_line($handle);
+    $m='';
+    for (my $j=0; $j < $msgbuflen/2 ; $j+= 2)
+      {
+	$m .= chr( hex(substr($l, $j, 2)));
+      }
+    # $l = &get_all_serial($handle, $i);
+    print $lh $m;
+  }
 
 if ($truncate)
   {
-      printf $handle ("m1WT\n", $i);
+      printf $handle ("m1WT\n");
     }
 
 
@@ -143,6 +151,22 @@ sub empty_serial_line
   return $readlen;
 }
 
+sub get_all_serial
+{
+  my $handle = shift;
+  my $addr = shift;
+  my $buffer;
+  my $n;
+  my $content  ='';
+  while ( poll($handle) )
+    {
+      $n = read( $handle , $buffer , 128 );
+      printf "read $n things from $addr\n"; 
+      $content .= $buffer;
+    }
+  return $content;
+}
+
 sub poll {
     my ($fh) = @_;
     my $in = '';
@@ -201,7 +225,7 @@ sub mapbaud {
 
 sub  open_logfile  # for append
 {
-  open($lh, ">>", $logfile) or die "Could not open logfile $logfile for append $!";
+  open($lh, ">", $logfile) or die "Could not open logfile $logfile for append $!";
   $lh->autoflush(1);
   return $lh;
 }

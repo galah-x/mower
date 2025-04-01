@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-04-01 11:32:16 john"';
+// my $ver =  'mcc  Time-stamp: "2025-04-01 17:53:58 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -55,7 +55,7 @@ const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 uint8_t serial_buf[record_size];
 uint8_t serial_buf_pointer;
 
-// this is used to beffer up the SD logging
+// this is used to buffer up the SD logging
 const uint16_t sdblksize = 4096; // blksize is always 512, cluster size usually 4k. 
 uint8_t sdbuf[sdblksize];
 uint16_t sdbuf_ptr;
@@ -64,7 +64,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint8_t msgbuflen= 128;  // for wifi transfers
 uint8_t return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 1 April 2025 Reva";
+const char * version = "MCC 1 Apr 2025 Revc";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -314,8 +314,8 @@ void setup (void) {
 
 void loop (void)
 {
-  char     logmsg[30]; // for building logging messages
-  unsigned long t1;
+  // char     logmsg[30]; // for building logging messages
+  // unsigned long t1;
   // service serial character if any available.
   do_serial_if_ready();
 
@@ -325,11 +325,11 @@ void loop (void)
   // update temperature and fan state if its due 
   if (rtc.getEpoch() > (last_temp_update_time + temp_update_period))
     {
-      hs_temperature=(int) tsense.readTemperature();
-      snprintf(logmsg, 30, "Temp=%d", hs_temperature);
+      //     hs_temperature=(int) tsense.readTemperature();
+      //     snprintf(logmsg, 30, "Temp=%d", hs_temperature);
       
-      t1 = millis();
-      logger(logmsg);
+      // t1 = millis();
+      // logger(logmsg);
       
       if (hs_temperature > fan_on_temp)
 	{
@@ -620,7 +620,27 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 	close_logfile();
 	file = SD.open(logfile, FILE_READ);
 	file.seek(value);
-	file.read(out_buf, out_buf_len);
+	file.read(out_buf, out_buf_len / 2);
+	// map bytes to a pair of ascii digits. Start with half a buf, and map from the half way point to the top.
+	// work to the start of the buffer
+	int i;
+	int j;
+	int k;
+	int l;
+	for (i= (out_buf_len / 4) -1 ; i>=0 ; i--)
+	  {
+	    j = out_buf[i];
+	    k = i*2+1;
+	    out_buf[k] = '0' + ( j & 0x0f);
+	    if (out_buf[k] > ('0' + 9))
+	      out_buf[k] += 7;    // map 0-9 to 0x30..39 and map 10..15 to 0x41 .. 0x46
+	    k--;
+	    out_buf[k] = '0' + ( j >> 4);
+	    if (out_buf[k] > ('0' + 9))
+	      out_buf[k] += 7;    // map 0-9 to 0x30..39 and map 10..15 to 0x41 .. 0x46
+	    out_buf[out_buf_len/2] = '\n';
+	    out_buf[1+out_buf_len/2] = 0;
+	  }
 	break;
 
       case 'E':
@@ -807,7 +827,8 @@ void logger (char*message)
 // open file for write. 
 void openFile(fs::FS &fs, const char *path) {
   Serial.printf("Opening file: %s\n", path);
-  file = fs.open(path, FILE_WRITE);      // open at end of current file
+  //  file = fs.open(path, FILE_WRITE);      // open at end of current file
+  file = fs.open(path, FILE_APPEND);      // open at end of current file
   if (!file) {
     Serial.println("Failed to open file for write");
   }
@@ -837,11 +858,13 @@ void appendtoFile(char *message) {
       memcpy(sdbuf + sdbuf_ptr, msg, msize);
       sdbuf_ptr= 0;
       file.write(sdbuf, sdblksize);                   // write seems to take about 40ms.
+      file.flush();
     }
   else // msg would overfill the buffer
     {
       memcpy(sdbuf + sdbuf_ptr, msg, buf_remaining);  // put first part of message that fits into buffer end
       file.write(sdbuf, sdblksize);                   // write out the complete buffer to SD
+      file.flush();
       sdbuf_ptr = msize-buf_remaining;                // set pointer to after the remaining fragment
       memcpy(sdbuf, msg+buf_remaining, sdbuf_ptr);    // copy the remaining message fragment
     }                                                 // to the start of the buffer for next time
@@ -880,8 +903,9 @@ void justify_logfile(void) {
     }
 	  
   // now write as much of the end part of sdbuf as required to bring the file size to a cluster boundary 
-  file.write(sdbuf + sdblksize - buf_remaining, buf_remaining);
-  Serial.printf("writing blank buf from %d length %d to logfile\n", sdblksize - buf_remaining, buf_remaining);
+  i=file.write(sdbuf + sdblksize - buf_remaining, buf_remaining);
+  file.flush();
+  Serial.printf("writing blank buf from %d length %d to logfile. Wrote %d\n", sdblksize - buf_remaining, buf_remaining, i);
 }
 
 void flush (void)
