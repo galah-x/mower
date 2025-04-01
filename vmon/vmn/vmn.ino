@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-16 10:48:14 john"';
+// my $ver =  'vmn   Time-stamp: "2025-03-25 13:36:23 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -34,7 +34,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-// #define DEBUG
+#define DEBUG
 
 // for preferences
 #define RW_MODE false
@@ -50,7 +50,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "VMON WIFI 16 Mar 2025 Reva";
+const char * version = "VMON WIFI 23 Mar 2025 Reva";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -65,6 +65,9 @@ float   adc0;
 float   adcgain;
 uint8_t board_address;
 int     s2baud;       // serial 2 baud rate
+bool nap = false;
+int32_t  nap_us;      // how long to nap for, in uS
+
 
 /* IOs  definitions */
 const uint8_t balance_en_pin  = 18;    // enable balance current dumper
@@ -87,6 +90,9 @@ int     battery_temperature;     // current value of heatsink temperature for th
 int     resistor_temperature;    // current value of heatsink temperature for the mower switch.
 bool    balance=false;           // true if mco has told me to balance.
 float   voltage = 0.0;           // current battery voltage
+bool    cal_we  = false;         // this is a write enable for cal from the wifi interface.
+int16_t we_poll_cd =0;           // this poll counter decrements if positive every voltage read.
+                                 // when 0, resets cal_we AND allows napping on polls to restart. 
 
 ESP32Time rtc;
 unsigned long last_temp_update_time;   // time last temperature was polled in seconds. 2 sensors alternate
@@ -114,6 +120,20 @@ esp_now_peer_info_t peerInfo;
 // wifi callback when data is sent
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
+  if (we_poll_cd > 0)
+    we_poll_cd--;           // poll counter used to inhibit napping under current testing and voltage cal.
+  
+  if (we_poll_cd == 0)
+    {
+      cal_we = false;
+      if (nap)
+	{ // nap here, as its called after the poll response has completed.
+	  esp_wifi_stop();
+	  esp_err_t result = esp_sleep_enable_timer_wakeup(nap_us);
+	  esp_light_sleep_start();     // Enter light sleep
+	  esp_wifi_start();
+	}
+    }
 }
 
 
@@ -142,6 +162,9 @@ void setup (void) {
   Serial.begin(115200);
   Serial.println(version);
 
+  // reinit_NVM();  sometimes you have to reinit to get it to start, when stuff changes just so!
+  
+  
   /* init IOs */
   pinMode(balance_en_pin, OUTPUT);
   digitalWrite(balance_en_pin, 0);
@@ -185,7 +208,9 @@ void setup (void) {
 
    // init some general variables and IOs 
    serial_buf_pointer = 0;
-
+   cal_we = false;
+   we_poll_cd = 0;
+   
    // init esp_now wifi 
    WiFi.mode(WIFI_STA);
 
@@ -286,7 +311,9 @@ void reinit_NVM (void)
   vmonPrefs.putUChar("address", '0');        // board address
   vmonPrefs.putBytes("cmtmac", default_cmt_mac, 6);  // mac address of tester
   vmonPrefs.putBytes("mcomac", default_mco_mac, 6);  // mac address of mower comms controller 
-  vmonPrefs.putBool("nvsInit", true);            // Create the "already initialized"
+  vmonPrefs.putBool("nap", true);             // Nap After Poll  after wifi poll?"
+  vmonPrefs.putLong("nap_us", 280000);         // nap time in us. about 3/4  of the poll period
+  vmonPrefs.putBool("nvsInit", true);         // Create the "already initialized"
   //  key and store a value.
   // The "factory defaults" are created and stored so...
   vmonPrefs.end();                               // Close the namespace in RW mode and...
@@ -308,6 +335,8 @@ void load_operational_params(void)
   board_address    = vmonPrefs.getUChar("address");         // board address
   vmonPrefs.getBytes("mcomac", mco_mac, 6);             // load mco comms controller mac
   vmonPrefs.getBytes("cmtmac", cmt_mac, 6);             // load cmt tester mac
+  nap = vmonPrefs.getBool("nap");                       // Nap After Poll  after wifi poll?"
+  nap_us = vmonPrefs.getLong("nap_us");                 // nap time in uS
   
    // All done. Last run state (or the factory default) is now restored.
    vmonPrefs.end();                                      // Close our preferences namespace.
@@ -317,30 +346,33 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 {
   // Z eraZe NV memory
   // Rf Read and print Field,
-  //    where Field could be
+  //    where Field could be   lower case comamnds tend to be immediate things, UPPER case is NVM
   //         A board address 1..4
   //         B baud rate on S2
   //         G adc gain
   //         H high balance temperature 
-  //         L low balance temperature  
-  //         M Macs
+  //         L low balance temperature
+  //         N nap and Nap_us
+  //         M Mac addresses I know about
   //         O adc offset
   //         V version
-  //         b current balance actual setting
-  //         c current balance requested setting
-  //         v current voltage
-  //         r current resistor temperature
-  //         s current battery temperature
-  // Wf Field,
-  //    where Field could be B baud rate on S2
-  //         A board address 1..4
-  //         B baud rate on S2
-  //         G adc gain
-  //         H highbalance temperature 
-  //         L low balance temperature  
-  //         M[CO] Macs
-  //         O adc offset
-  //         b balance               
+  //         b  balance requested setting
+  //         c  balance actual setting
+  //         v latest voltage
+  //         r  resistor latest temperature
+  //         s  battery latest temperature
+  // W%c[%c]=value,
+  //    where Field could be:     lower case comamnds tend to be immediate things, UPPER case is NVM
+  //         A=%d board address 1..4
+  //         B=%d baud rate on S2
+  //         G=%f adc gain
+  //         H=%d highbalance temperature 
+  //         L=%d low balance temperature  
+  //         M[CO]=%f Macs for mcO or Cmt
+  //         NE=b   nap after poll, a boolean enable
+  //         NT=d   nap time in uS. default 280,000us
+  //         O=%f adc offset
+  //         b=%b balance               
 
   uint8_t read_pointer = 0;
   uint8_t  cmd;
@@ -390,6 +422,10 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 		      cmt_mac[0],cmt_mac[1],cmt_mac[2],cmt_mac[3],cmt_mac[4],cmt_mac[5]);
 	break;
 
+      case 'N':
+	snprintf(out_buf, out_buf_len, "nap_en=%1d nap_time=%d we_poll_cd=%d\n", nap, nap_us, we_poll_cd);
+	break;
+
       case 'O':
 	snprintf(out_buf, out_buf_len, "adc_offset=%f\n", adc0);
 	break;
@@ -425,7 +461,8 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
     {
       // first case, WA=3     decimal integer up to ~5 sig figures
       match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
-      
+      //  if (match == 3)
+      // Serial.printf("bal request %d\n", value);
       switch (field) {
       case 'b' :   // balance
 	if (value == 0)
@@ -490,6 +527,17 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	load_operational_params();
 	break;
 	
+      case 'N':
+	match =  sscanf(in_buf, "%c%c%c=%d", &cmd, &field, &field2, &value);
+	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+	if (field2 == 'E')
+	  vmonPrefs.putBool("nap", value);
+	else if (field2 == 'T')
+	  vmonPrefs.putLong("nap_us", value);
+	vmonPrefs.end();                              // Close the namespace
+	load_operational_params();
+	break;
+
       case 'O':
 	match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
 	vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
@@ -536,6 +584,9 @@ void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
 {
   uint8_t cmd;
   uint8_t field;
+  float fvalue;
+  int match;
+  int value;
   
   cmd = in_buf[0];
   if (cmd == 'R')
@@ -562,6 +613,16 @@ void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
       case 's':
 	snprintf(out_buf, out_buf_len, "s=%2dC\n", battery_temperature);
 	break;
+
+      case 'G':
+	Serial.printf("got gain read\n");
+	snprintf(out_buf, out_buf_len, "G=%f\n", adcgain);
+	break;
+
+      case 'O':
+	Serial.printf("got offset read\n");
+	snprintf(out_buf, out_buf_len, "O=%f\n", adc0);
+	break;
       }
     }
 
@@ -570,12 +631,70 @@ void parse_wifi_buf(char * in_buf, char * out_buf, uint8_t out_buf_len)
       field = in_buf[1];
       switch (field)
 	{
-	case 'b':
+	case 'b':  // balance
 	  if (in_buf[3] == '0')
-	    balance = false;
+	    {
+	      balance = false;
+	      digitalWrite(balance_en_pin, 0);
+	    }	      
 	  else
-	    balance=true;
+	    {
+	      balance=true;
+	      digitalWrite(balance_en_pin, 1);
+	    }
 	  snprintf(out_buf, out_buf_len, "bok\n");
+	  break;
+	  
+	case 'W':  // WW=%4d\n  enables write to the adc gain and offset terms.
+	           // It gets reset by n  voltage reads, where n is the parameter carried.
+	           // it also inhibits napping for n reads if napping is enabled.
+	           // facilitating current checks and voltage cal.
+	           // this is to protect the calibration terms from accidental overwrite.
+	  match =  sscanf(in_buf, "WW=%4d", &value);
+	  if (match == 1)
+	    {
+#ifdef DEBUG
+	      Serial.printf("we set for %d polls, napping inhibited then too.\n", value);
+#endif
+	      cal_we = true;
+	      we_poll_cd = value;
+	    }
+	  break;
+	  
+	case 'G':
+#ifdef DEBUG
+	  Serial.printf("got gain write with we =%d\n", cal_we);
+#endif
+	  if (cal_we)
+	    {
+	      match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
+	      if (match == 3)
+		{
+		  vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+		  vmonPrefs.putFloat("adcgain", fvalue);               
+		  vmonPrefs.end();                              // Close the namespace
+		  load_operational_params();
+		  snprintf(out_buf, out_buf_len, "Gok\n");
+		}
+	    }
+	  break;
+	  
+	case 'O':
+#ifdef DEBUG
+	  Serial.printf("got offset write with we =%d\n", cal_we);
+#endif
+	  if (cal_we)
+	    {
+	      match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
+	      if (match == 3)
+		{
+		  vmonPrefs.begin("vmonPrefs", RW_MODE);         // Open our namespace for write
+		  vmonPrefs.putFloat("adc0", fvalue);               
+		  vmonPrefs.end();                              // Close the namespace
+		  load_operational_params();
+		  snprintf(out_buf, out_buf_len, "Ook\n");
+		}
+	    }
 	  break;
 	}
     }

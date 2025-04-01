@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-03-16 20:45:45 john"';
+// my $ver =  'mcc  Time-stamp: "2025-04-02 10:20:11 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -14,17 +14,19 @@
    It gets instructed by the MCO in the mower as to what to do.
    The model where I can control it either serially from the esp32 debug terminal, or using
    the same commands across esp_now from the MCO seems to work ok for test + development. */
-// NB, logging now writes in 4K chunks to minimize RmodifyW delays as part of locating logging
-//     crazy 10s delays. Which were predominately a broken ESP32Time when Time wasn't set to > year 1980.   
-//     Should help CDcard wear levelling no end also. Downside is you need to use the UI to turn
-//     off logging (which flushes then closes the file) prior to power down if you want
-//     the last ~~10 minutes of logs.
-//     The 4k write seems to take 40ms. hopefully thats not generally noticeable.
 
-// test cmt MAC is 5c013b6c9938
-// test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
-// test psu MAC is       wifi to serial adapter for the power supply. Originally a vichy mm adaptor
-// test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController
+/* NB, logging now writes in 4K chunks to minimize RmodifyW delays as part of locating logging
+     crazy 10s delays. Which were predominately a broken ESP32Time when Time wasn't set to > year 1980.   
+     Should help CDcard wear levelling no end also. Downside is you need to use the UI to turn
+     off logging (which flushes then closes the file) prior to power down if you want
+     the last ~~10 minutes of logs.
+     The 4k write seems to take 40ms. hopefully thats not generally noticeable.
+     Going to change the default logfile state to closed  as stuff keeps going missing. */
+
+/* test cmt MAC is 5c013b6c9938
+   test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
+   test psu MAC is       wifi to serial adapter for the power supply. Originally a vichy mm adaptor
+   test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController */
 
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
@@ -38,11 +40,11 @@
 #include <hd44780.h>   // lcd library
 #include <hd44780ioClass/hd44780_I2Cexp.h> // include i/o class header
 #include <RotaryEncoder.h>
- #include "FS.h"            // filesystem for sd logging
- #include "SD.h"            // SD apparently uses ram more effectively than SDFat
- #include "SPI.h"           // SPI access to sd card
+#include "FS.h"            // filesystem for sd logging
+#include "SD.h"            // SD apparently uses ram more effectively than SDFat
+#include "SPI.h"           // SPI access to sd card
 
-#define DEBUG
+// #define DEBUG
 
 // for preferences
 #define RW_MODE false
@@ -52,19 +54,19 @@
 // serial is used for debug and for programming NVM
 const uint8_t longest_record = 24;  //   worst is display comand WD1=12345678901234567890
 const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
-char serial_buf[record_size];
+uint8_t serial_buf[record_size];
 uint8_t serial_buf_pointer;
 
-// this is used to beffer up the SD logging
+// this is used to buffer up the SD logging
 const uint16_t sdblksize = 4096; // blksize is always 512, cluster size usually 4k. 
 uint8_t sdbuf[sdblksize];
 uint16_t sdbuf_ptr;
 
 uint8_t baseMac[6];         // my own mac address
-const  uint16_t msgbuflen= 128;  // for wifi transfers
-char return_buf[msgbuflen]; // for responses
+const  uint8_t msgbuflen= 128;  // for wifi transfers
+uint8_t return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 14 Mar 2025 Reva";
+const char * version = "MCC 1 Apr 2025 Revc";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -80,7 +82,7 @@ uint8_t mco_mac[6];
 bool UI_owns_display;
 
 typedef struct struct_message {
-  char message[msgbuflen];
+  uint8_t message[msgbuflen];
 } struct_message;
 
 // create the wifi message struct
@@ -100,20 +102,23 @@ struct_message response_data;
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&response_data, incomingData, sizeof(response_data));
+#ifdef DEBUG
   Serial.print("received ");
   Serial.print(len);
   Serial.print(" bytes from ");  
   Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
   /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
      fields 12 to 17 seem to be the source MAC. rest isn't obvious */
-
+#endif
   parse_buf(response_data.message, return_buf, msgbuflen);
+#ifdef DEBUG
   Serial.print("parsed responded: ");
   Serial.printf("%s", return_buf);
-  Serial.print(response_data.message);
+  Serial.printf((char *) response_data.message);
+#endif
   //** return return_buf to requestor here **
 
-  strncpy(response_data.message, return_buf, msgbuflen);
+  strncpy((char *)response_data.message, (char *) return_buf, msgbuflen);
   // Send message via ESP-NOW
   esp_err_t result = esp_now_send(mco_mac, (uint8_t *) &response_data, sizeof(response_data));
   
@@ -152,7 +157,6 @@ uint8_t enc_pushn_state;
 int     enc_change = 0;
 uint8_t enc_press = 0;
 int     enc_press_debounce = 50; //msecs
-bool    log_file_open=0;
 bool    show_menu;
 int     menu;
 int     menu_line;
@@ -178,8 +182,8 @@ const unsigned long temp_update_period = 10; // seconds.
 unsigned long last_psu_update_time;         // time last power supply voltage and current was polled at
 const unsigned long psu_update_period = 2;  // seconds.
 
-// logfile flushes when the buffer is full.
-// Manually flush via UI on termination if last fragment of log is wanted.
+// logfile gets written from buffer  when the buffer is full.
+// Manually flush via UI on termination if the last fragment of log is wanted.
 
 // create lcd object
 hd44780_I2Cexp lcd;
@@ -308,15 +312,18 @@ void setup (void) {
     sdbuf_ptr=0;
     
     if (logging)
-      open_logfile(false, true); // truncate, justify
+      {
+	open_logfile(false, true); // truncate, justify
+	close_logfile();
+      }
 }
 
    
 
 void loop (void)
 {
-  char     logmsg[30]; // for building logging messages
-  unsigned long t1;
+  // char     logmsg[30]; // for building logging messages
+  // unsigned long t1;
   // service serial character if any available.
   do_serial_if_ready();
 
@@ -326,11 +333,11 @@ void loop (void)
   // update temperature and fan state if its due 
   if (rtc.getEpoch() > (last_temp_update_time + temp_update_period))
     {
-      hs_temperature=(int) tsense.readTemperature();
-      snprintf(logmsg, 30, "Temp=%d", hs_temperature);
+      //     hs_temperature=(int) tsense.readTemperature();
+      //     snprintf(logmsg, 30, "Temp=%d", hs_temperature);
       
-      t1 = millis();
-      logger(logmsg);
+      // t1 = millis();
+      // logger(logmsg);
       
       if (hs_temperature > fan_on_temp)
 	{
@@ -487,6 +494,8 @@ void do_menu_1 (void)  // log menu
 	      // turn off logging
 	      logging=0;
 	      show_menu=1;
+	      open_logfile(false, false);
+	      flush();
 	      close_logfile();
 	    }
 	  else
@@ -494,12 +503,14 @@ void do_menu_1 (void)  // log menu
 	      // turn on logging
 	      logging=1;
 	      show_menu=1;
-	      open_logfile(false, true); // truncate, justify
+	      //open_logfile(false, true); // truncate, justify
 	    }
 	}
       if (menu_line == 2) // truncate logfile
 	{
-	  file.seek(0);
+	  open_logfile(true, false);
+	  close_logfile();
+	  //file.seek(0);
 	  sdbuf_ptr=0;
 	}
     }
@@ -568,34 +579,37 @@ void load_operational_params(void)
    mccPrefs.end();                                      // Close our preferences namespace.
 }
 
-void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
+void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 {
   // Z eraZe NV memory
   // Rf Read and print Field,
-  //    where Field could be v voltage xx.xxx V fixed format
-  //                         i current xx.xxx A fixed format
-  //                         E power state enabled
-  //                         H=templimit_fanon in integer degrees
-  //                         L=fan temp off again low
-  //                         l=log state
-  //                         M print mac addresses
-  //                         T=temperature
-  //                         V=version
+  //    where Field could be Rv voltage xx.xxx V fixed format
+  //                         Ri current xx.xxx A fixed format
+  //                         RB=%x\n read block of msgbuflen from logfile at current seek pointer 
+  //                         RE power state enabled
+  //                         RH=templimit_fanon in integer degrees
+  //                         RL=fan temp off again low
+  //                         Rl=log state
+  //                         RM print mac addresses
+  //                         RS read logfile seek pointer aka length
+  //                         RT=temperature
+  //                         RV=version
   // Wf Field,
-  //    where Field could be v voltage Wv=xx.xxx    fixed format set power supply voltage
-  //                         i current Wi=xx.xxx    fixed format set psu current
-  //                         E enable  WE=1         turn on/off mower charge power
-  //                         H=fan on  WH=45        fan on temperature in decomal degrees
-  //                         L=fan off WL=23        fan off temperature in decomal degrees
-  //                         l                      set log state
-  //                         D=display WD0=string   write display line 0..3 with given string
-  //                         Mx mac    WMP=<12 ascii hex digits>  mac for Psu or Mco
-  //                        
+  //    where Field could be Wv voltage Wv=xx.xxx    fixed format set power supply voltage
+  //                         Wi current Wi=xx.xxx    fixed format set psu current
+  //                         WE enable  WE=1         turn on/off mower charge power
+  //                         WH=fan on  WH=45        fan on temperature in decomal degrees
+  //                         WL=fan off WL=23        fan off temperature in decomal degrees
+  //                         Wl                      set log state
+  //                         WD=display WD0=string   write display line 0..3 with given string
+  //                         WMx mac    WMP=<12 ascii hex digits>  mac for Psu or Mco
+  //                         WT=0\n                   truncate logfile 
+
   uint8_t  cmd;
   uint8_t  field;
   uint8_t  field2;
   uint8_t field3;
-  int      value;
+  int32_t  value;
   uint8_t  mvalue[6]; // mac address
   uint8_t  msg[21];   // 20 chars and 0 terminator
   char     logmsg[30]; // for building logging messages
@@ -613,37 +627,71 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
     field = in_buf[1];
     switch (field)
       {
-	// FIXME support v,i read voltage and current settings from PSU and report.
+      case 'B': // logfile block, start address in hex
+	match =  sscanf((char *) in_buf, "RB=%x", &value);
+	// close_logfile();
+	file = SD.open(logfile, FILE_READ);
+	file.seek(value);
+	file.read(out_buf, out_buf_len / 2);
+	close_logfile();
+	// map bytes to a pair of ascii digits. Start with half a buf, and map from the half way point to the top.
+	// work to the start of the buffer
+	int i;
+	int j;
+	int k;
+	int l;
+	for (i= (out_buf_len / 4) -1 ; i>=0 ; i--)
+	  {
+	    j = out_buf[i];
+	    k = i*2+1;
+	    out_buf[k] = '0' + ( j & 0x0f);
+	    if (out_buf[k] > ('0' + 9))
+	      out_buf[k] += 7;    // map 0-9 to 0x30..39 and map 10..15 to 0x41 .. 0x46
+	    k--;
+	    out_buf[k] = '0' + ( j >> 4);
+	    if (out_buf[k] > ('0' + 9))
+	      out_buf[k] += 7;    // map 0-9 to 0x30..39 and map 10..15 to 0x41 .. 0x46
+	    out_buf[out_buf_len/2] = '\n';
+	    out_buf[1+out_buf_len/2] = 0;
+	  }
+	break;
+
       case 'E':
-	snprintf(out_buf, out_buf_len, "Mower_power=%d\n", digitalRead(power48V_en_pin));
+	snprintf((char *)out_buf, out_buf_len, "Mower_power=%d\n", digitalRead(power48V_en_pin));
 	break;
 
       case 'H':
-	snprintf(out_buf, out_buf_len, "Fan_on_at=%d degrees \n", fan_on_temp);
+	snprintf((char *)out_buf, out_buf_len, "Fan_on_at=%d degrees \n", fan_on_temp);
 	break;
 	
       case 'L':
-	snprintf(out_buf, out_buf_len, "Fan_off_at=%d degrees\n", fan_off_temp);
+	snprintf((char *)out_buf, out_buf_len, "Fan_off_at=%d degrees\n", fan_off_temp);
 	break;
 
       case 'l':
-	snprintf(out_buf, out_buf_len, "log=%d\n", logging);
+	snprintf((char *)out_buf, out_buf_len, "log=%d\n", logging);
 	break;
 	
       case 'M':
-	snprintf(out_buf, out_buf_len, "MCC_MAC=%02x%02x%02x%02x%02x%02x PSU=%02x%02x%02x%02x%02x%02x MCO=%02x%02x%02x%02x%02x%02x\n",
+	snprintf((char *)out_buf, out_buf_len, "MCC_MAC=%02x%02x%02x%02x%02x%02x PSU=%02x%02x%02x%02x%02x%02x MCO=%02x%02x%02x%02x%02x%02x\n",
 		 baseMac[0],baseMac[1],baseMac[2],baseMac[3],baseMac[4],baseMac[5],
 		 psu_mac[0],psu_mac[1],psu_mac[2],psu_mac[3],psu_mac[4],psu_mac[5],
 		 mco_mac[0],mco_mac[1],mco_mac[2],mco_mac[3],mco_mac[4],mco_mac[5]
 		 );
 	break;
-
+      case 'S': // logfile length
+	open_logfile(false, false);
+	value = file.size();
+	close_logfile();
+	snprintf((char *)out_buf, out_buf_len, "Logfile=%d\n", value);
+	break;
+	
       case 'T':
-	snprintf(out_buf, out_buf_len, "Temp=%d degrees\n", hs_temperature);
+	snprintf((char *)out_buf, out_buf_len, "Temp=%d degrees\n", hs_temperature);
 	break;
 
       case 'V':
-	snprintf(out_buf, out_buf_len, "%s\n", version);
+	snprintf((char *)out_buf, out_buf_len, "%s\n", version);
 	break;
       }
       break;
@@ -651,7 +699,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 
   case 'W':
     // first case, WA=3     decimal integer up to ~5 sig figures
-    match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
+    match =  sscanf((char *)in_buf, "%c%c=%d", &cmd, &field, &value);
     
     switch (field)
       {
@@ -674,7 +722,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	else
 	  cmax = 7;
 	int l;
-	l=strlen(in_buf);
+	l=strlen((char *)in_buf);
 	Serial.printf("strlen=%0d\n",l);
 	for (i=4; i < 4+cmax; i++)
 	  {
@@ -693,7 +741,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	if (! UI_owns_display)
 	  {
 	    lcd.setCursor(field3,field2);
-	    lcd.print(out_buf);
+	    lcd.print((char *)out_buf);
 	  }
 	out_buf[0]=0;
 	break;
@@ -724,7 +772,7 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	break;
 	
       case 'M':  // WMP=MACADDRESS for the guy to respond to
-	match =  sscanf(in_buf, "%c%c%c=%2x%2x%2x%2x%2x%2x", &cmd, &field,&field2,
+	match =  sscanf((char *)in_buf, "%c%c%c=%2x%2x%2x%2x%2x%2x", &cmd, &field,&field2,
 			&mvalue[0],&mvalue[1],&mvalue[2],&mvalue[3],&mvalue[4],&mvalue[5]);
 	
 	mccPrefs.begin("mccPrefs", RW_MODE);         // Open our namespace for write
@@ -735,9 +783,15 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 	mccPrefs.end();                              // Close the namespace
 	load_operational_params();
 	break;
+
+      case 'T': // truncate logfile
+	open_logfile(true, false);  // truncate logfile, dont justify.
+	close_logfile();            // flush that to the system
+	break;
+
+	// end of 'W'
       }      
     break;
-    // end of 'W'
   }    
 }
 
@@ -756,7 +810,7 @@ void do_serial_if_ready (void)
 	serial_buf[serial_buf_pointer] = (uint8_t) 0;  // write string terminator to buffer
 	if (serial_buf_pointer >= 1) {                 // at least a command letter
 	  parse_buf(serial_buf, return_buf, 127);      // parse the buffer if at least one char in it.
-	  Serial.print(return_buf);
+	  Serial.printf((char *)return_buf);
 	}
 	serial_buf_pointer = 0;
       }
@@ -787,7 +841,7 @@ void logger (char*message)
 // open file for write. 
 void openFile(fs::FS &fs, const char *path) {
   Serial.printf("Opening file: %s\n", path);
-  file = fs.open(path, FILE_WRITE);      // open at end of current file
+  file = fs.open(path, FILE_APPEND);      // open at end of current file
   if (!file) {
     Serial.println("Failed to open file for write");
   }
@@ -816,12 +870,16 @@ void appendtoFile(char *message) {
     { 
       memcpy(sdbuf + sdbuf_ptr, msg, msize);
       sdbuf_ptr= 0;
+      open_logfile(false, false);
       file.write(sdbuf, sdblksize);                   // write seems to take about 40ms.
+      close_logfile();
     }
   else // msg would overfill the buffer
     {
       memcpy(sdbuf + sdbuf_ptr, msg, buf_remaining);  // put first part of message that fits into buffer end
+      open_logfile(false, false);
       file.write(sdbuf, sdblksize);                   // write out the complete buffer to SD
+      close_logfile();
       sdbuf_ptr = msize-buf_remaining;                // set pointer to after the remaining fragment
       memcpy(sdbuf, msg+buf_remaining, sdbuf_ptr);    // copy the remaining message fragment
     }                                                 // to the start of the buffer for next time
@@ -860,8 +918,9 @@ void justify_logfile(void) {
     }
 	  
   // now write as much of the end part of sdbuf as required to bring the file size to a cluster boundary 
-  file.write(sdbuf + sdblksize - buf_remaining, buf_remaining);
-  Serial.printf("writing blank buf from %d length %d to logfile\n", sdblksize - buf_remaining, buf_remaining);
+  i=file.write(sdbuf + sdblksize - buf_remaining, buf_remaining);
+  file.flush();
+  Serial.printf("writing blank buf from %d length %d to logfile. Wrote %d\n", sdblksize - buf_remaining, buf_remaining, i);
 }
 
 void flush (void)

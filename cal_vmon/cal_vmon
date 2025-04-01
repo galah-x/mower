@@ -1,0 +1,468 @@
+#!/usr/bin/perl -w
+#    -*- Mode: cperl     -*-
+# emacs automagically updates the timestamp field on save
+# my $ver =  'cal_vmon   Time-stamp: "2025-03-23 15:44:17 john"';
+
+# this script is to auto test and cal the 4 vmons.
+# as of right now, it only tests cal.
+# I have not given the vmons wifi access to cal write... in case that was to get overwritten by noise by mistake..
+# I _could_ add read access to gain and offset without risk. - just bit of extra code in mco and vmon
+# I could add write access to gain and offset protected by some odd command
+# and to be extra sure that cal write access could be removed by something very routine, like reading voltage.
+# OK, done that, lets see if it works...
+
+# testing will check
+# 1. temp read from battery temp sensors
+# 2. temp read from resistor temp sensor
+# 3. voltage read
+# 4. turn on balance and check board current
+# 5. check res temp after on for a particular while.
+
+# test environment
+# access vmons via mcc which is acccessed via a serial port
+# access board voltage via a vichy mm. Its connected via wifi so need a remote shell via wren
+# access board current as prior line.
+
+# logging
+
+use strict;
+use  Getopt::Long;
+use POSIX qw(strftime);
+use POSIX qw(:termios_h);
+use IO::Handle;
+use Fcntl qw( O_RDONLY O_RDWR O_NOCTTY);
+
+my $vcmd = "ssh john\@wren /home/john/vichytest | awk '{print \$1}'";
+my $icmd = "ssh john\@wren /home/john/vichytest2 | awk '{print \$1}'";
+my $mcoport = "/dev/ttyUSB2";
+my $logfile = "cal.log";
+my $baud = 115200;
+my $board = 1;
+my $lh;
+my $cal = '';
+my $l;
+# If i is a member of cal, then cal that board, don't just cal check it. --CAL 1234 means cal all 4.
+
+&GetOptions (
+	     'vcmd=s',    \$vcmd,
+	     'icmd=s',    \$icmd,
+	     'mcoport=s',    \$mcoport,
+	     'baud=s',    \$baud,
+	     'CAL=s',     \$cal, 
+	     'board=n',   \$board
+	    );
+
+#printf ("%f %f\n", &get_v(), &get_i());
+(my $handle, my $success) = &openserial($mcoport,$baud);
+print "open serial success=$success\n" if ($success !=1);
+
+# handle interrupt more cleanly, by closing logfile prior to exit. which should flush it.
+$SIG{INT} = sub { close $lh; die "close logfile and exit\n";};
+$SIG{TERM} = sub { close $lh; die "close logfile and exit\n";};
+
+
+$lh = &open_logfile();
+# printb(sprintf("board %1d V=%f\n", $board, &read_v($board))); 
+my $ii;
+my $v;
+my $bv;
+my $i2;
+my $v2;
+my $bv2;
+my $i3;
+my $v3;
+my $bv3;
+
+if (my $n=  &empty_serial_line($handle)) {
+    print "start emptied $n\n";}
+printb("disable then enable polling\n");
+
+disable_polling();
+sleep (1);
+enable_polling();
+sleep (5);
+
+
+
+
+printb("currents, polling and presumably napping\n");
+&check_current(10);
+
+
+printb("currents, not polling\n");
+disable_polling();
+sleep 2;
+&check_current(10);
+
+
+
+
+
+printb("set we and inhibit naps. restart polling\n");
+for(my $j=1; $j<=4; $j++)
+  {
+    printf $handle ("WV%1dE=2000\n", $j);
+    #$l  = &get_serial_line($handle);
+    sleep 1;
+  }
+
+enable_polling();
+printb("and check current\n");
+sleep 2;
+&check_current(10);
+
+for(my $i=1; $i<=4; $i++)
+  {
+    chk_bal($i);
+  }
+
+# now let things cool
+sleep 10;
+
+for(my $i=1; $i<=4; $i++)
+# a cal check pass
+  {
+    # enable_polling();
+    chk_bd($i);
+    # and a cal perform pass for those channels is enabled
+    if ($cal =~ /$i/) {
+      do_cal_bd($i);
+    }
+  }
+
+close($lh);
+closeserial($handle);
+
+
+
+
+# call this immediately after chk_bd.
+sub do_cal_bd
+{
+  my $board = shift;
+  #my $err = (($v - $bv) + ($v3 - $bv3)) / (($v + $v3) / 2);
+  
+  my $orig_gain = &read_gain($board);
+  my $mm_v = $v + $v3;
+  my $bd_v  = $bv + $bv3;
+  my $new_gain;
+  $new_gain = $orig_gain * $mm_v / $bd_v;
+  printb(sprintf ("orig gain was %f, calculated better gain is %f\n", $orig_gain, $new_gain));
+  #      printf " doing write_gain\n"; 
+  &write_gain($board, $new_gain);
+  #      printf " done write_gain\n"; 
+}
+
+
+sub read_gain
+{
+  my $bd = shift;
+  &disable_polling();
+  printf $handle ("Rv%dG\n", $bd);
+  $l  = &get_serial_line($handle);
+  $l =~ /G=([\d\.]+)/;
+  &enable_polling();
+  return $1;
+}
+
+
+sub disable_polling
+{
+  printf $handle ("Wp=0\n");
+  sleep 1;
+}
+
+sub enable_polling
+{
+  printf $handle ("Wp=1\n");
+  sleep 1;
+}
+
+sub write_gain
+{
+  my $bd = shift;
+  my $ngain =  shift;
+#  print "doing disable_polling\n";
+#  &disable_polling();
+#  printf $handle ("WV%dwe\n", $bd);
+#  sleep 1;
+#  print "doing write gain\n";
+  printf $handle ("WV%dG=%f\n", $bd, $ngain);
+  #my $l  = &get_serial_line($handle);
+  #$l =~ /G=([\d\.]+)/;
+  sleep 1;
+#  print "doing enable_polling\n";
+#  &enable_polling();
+}
+
+sub chk_bd
+{
+  my $bd = shift;
+  $ii = &get_i;
+  $v = &get_v;
+  $bv = &read_v($bd);
+  my $bt = &read_bt($bd);
+  my $rt = &read_rt($bd);
+  printb(sprintf "board %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
+    $bd, $v, $bv, $ii, $bt, $rt, $v-$bv);
+
+  sleep 1;
+  
+  $v3 = &get_v;
+  $i3 = &get_i;
+  $bv3 = &read_v($bd);
+  my $bt3 = &read_bt($bd);
+  my $rt3 = &read_rt($bd);
+  printb(sprintf "en=0  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d dv=%2.3f\n",
+    $bd, $v3, $bv3, $i3, $bt3, $rt3, $v3-$bv3);
+  printb(sprintf "difference between deltav with balance on and deltav bal off averages %1.4f\n",
+    ($v + $v3 - $bv - $bv3) /2  - ($v2 - $bv2));
+
+}
+
+
+
+
+sub chk_bal
+{
+  my $bd = shift;
+  
+  &set_b($bd, 1);
+  sleep 10;
+
+  $v2 = &get_v;
+  $i2 = &get_i;
+  $bv2 = &read_v($bd);
+  my $bt2 = &read_bt($bd);
+  my $rt2 = &read_rt($bd);
+  printb(sprintf "en=1  %d Vmm=%2.3f Vrd=%2.3f i=%3.1fmA bt=%d rt=%d ",
+    $bd, $v2, $bv2, $i2, $bt2, $rt2);
+
+  &set_b($bd, 0);
+
+}
+
+# just checks the total current 
+sub check_current
+{
+  my $tot_i = 0;
+  my $tot_v = 0;
+  my $min_i = 1000;
+  my $max_i = 0;
+  my $i;
+  my $v;
+  my $avg = shift;
+  for (my $j=0; $j<$avg; $j++) {
+    $i = &get_i;
+    $v = &get_v;
+    #  $bv = &read_v($bd);    lets not poll
+    if ($i > $max_i)
+      {$max_i = $i}
+    if ($i < $min_i)
+      {$min_i = $i}
+    $tot_i += $i;
+    $tot_v += $v;
+    sleep 1;
+  }
+
+  printb(sprintf "boards together draw %3.1fmA at %2.3fV, maxI=%3.1fmA, minI=%3.1fmA\n",
+	 $tot_i/$avg, $tot_v/$avg, $max_i, $min_i)
+}
+
+
+
+
+
+# print to both logfile and stdout
+sub printb
+{
+  my $string = shift;
+  print $string;
+  print $lh $string;
+}
+
+
+sub set_b # setbalance
+{
+  my $board = shift;
+  my $bal = shift;
+  printf $handle ("Wb%d=%d\n", $board, $bal);
+  #my $l  = &get_serial_line($handle);
+  #$l =~ /oltage=([\d\.]+)/;
+  #return $1;
+  sleep 1;
+}
+sub read_v
+{
+  if (my $n=  &empty_serial_line($handle)) {
+    print "read_v emptied $n\n";}
+  my $board = shift;
+#  printf "read_v $board\n";
+  printf $handle ("Rv%d\n", $board);
+  $l  = &get_serial_line($handle);
+#  printf "read_v %s\n", $l;
+  $l =~ /oltage=([\d\.]+)/;
+  return $1;
+}
+sub read_rt
+{
+  if (my $n=  &empty_serial_line($handle)) {
+    print "read_rt emptied $n\n";}
+  my $board = shift;
+  printf $handle ("Rv%d\n", $board);
+  $l  = &get_serial_line($handle);
+  #print "rt $l\n";
+  $l =~ /\srt=([\d\.]+)C/;
+  return $1;
+}
+sub read_bt
+{
+  if (my $n=  &empty_serial_line($handle)) {
+    print "read_bt emptied $n\n";}
+
+  my $board = shift;
+  printf $handle ("Rv%d\n", $board);
+  $l  = &get_serial_line($handle);
+  #print "bt $l\n";
+  $l =~ /bt=([\d\.]+)C/;
+  return $1;
+}
+
+sub get_v ()
+{ my $v = `$vcmd`;
+  return $v;
+}
+sub get_i ()
+{ my $i = 10 * `$icmd`;
+  return $i;
+}
+
+sub openserial { 
+    my $port = shift;
+    my $baud = shift;
+
+    # Used to control serial line discipline et cetera
+    my $term;
+    my $cflag=0;
+    # Files etc
+    my ($fd_tty);
+    my $handle;
+    my $success = sysopen($handle, $port, O_RDWR | O_NOCTTY );
+    # See perlfaq8 for details on how the following ioctl's are done 
+    $handle->autoflush(1);
+    $fd_tty = fileno($handle);
+    $term = POSIX::Termios->new();
+    $term->getattr($fd_tty) || die("Failed getattr on tty_in: $!");
+
+   # Set baudrate
+    #    $cflag |= &B38400;
+    $cflag |= (CS8 | CSTOPB ); # 2 stop bits
+    $term->setlflag(0); # Have to have no echo for this to work
+    $term->setiflag( 0);
+    $term->setoflag( 0);
+    $term->setcflag($cflag |  CLOCAL | CREAD );  # local disables modem control
+    $term->setcc(VMIN, 50); 
+    $term->setcc(VTIME, 5); 
+
+    $term->setospeed(&mapbaud($baud));
+    $term->setispeed(&mapbaud($baud));
+    #    printf "getospeed returns %d\n", $term->getospeed;
+    $term->setattr($fd_tty, TCSANOW) || die "Failed setattr tty in : $!";
+    return ($handle,$success);
+}
+
+
+sub get_serial_line
+{
+  my $handle = shift;
+  return <$handle>;
+}
+
+sub empty_serial_line
+{
+  my $buffer;
+  #  my $n;
+  my $handle = shift;
+  #  while($n=sysread($handle,$buffer, 1024))
+  #    {
+  #     printf "emptied %d chars\n", $n;
+  #  }
+  my $readlen =0;
+  while ( poll($handle) )
+    {
+      $readlen += read( $handle , $buffer , 1 );
+    }
+  return $readlen;
+}
+
+sub poll {
+    my ($fh) = @_;
+    my $in = '';
+    vec($in,fileno($fh),1) = 1;
+    return select($in,undef,undef,0);
+}
+
+
+sub mapbaud {
+    my $ret = 13; # 9600 default 
+    my $baud = shift;
+    if ($baud == 1200) {
+        $ret = 9;
+    } elsif ($baud == 1800) {
+        $ret = 10;
+    } elsif ($baud == 2400) {
+        $ret = 11;
+    } elsif ($baud == 4800) {
+        $ret = 12;
+    } elsif ($baud == 9600) {
+        $ret = 13;
+    } elsif ($baud == 19200) {
+        $ret = 14;
+    } elsif ($baud == 38400) {
+        $ret = 15;
+   } elsif ($baud == 57600) {
+        $ret = 4097;
+    } elsif ($baud == 115200) {
+        $ret = 4098;
+    } elsif ($baud == 230400) {
+        $ret = 4099;
+    } elsif ($baud == 460800) {
+        $ret = 4100;
+    } elsif ($baud == 500000) {
+        $ret = 4101;
+    } elsif ($baud == 576000) {
+        $ret = 4102;
+    } elsif ($baud == 921600) {
+        $ret = 4103;
+    } elsif ($baud == 1000000) {
+        $ret = 4104;
+    } elsif ($baud == 1152000) {
+        $ret = 4105;
+    } elsif ($baud == 2000000) {
+        $ret = 4107;
+    } elsif ($baud == 2500000) {
+       $ret = 4109;
+    } elsif ($baud == 3500000) {
+        $ret = 4110;
+    } elsif ($baud == 4000000) {
+        $ret = 4111;
+    }
+    return $ret;
+}
+ 
+
+sub  open_logfile  # for append
+{
+  open($lh, ">>", $logfile) or die "Could not open logfile $logfile for append $!";
+  $lh->autoflush(1);
+  return $lh;
+}
+
+
+sub closeserial {
+  close shift;
+}
+
+
+
+
