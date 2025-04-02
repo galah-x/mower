@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-02 11:24:38 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-02 14:47:30 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -130,7 +130,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 2 Apr 2025 Rev1";
+const char * version = "MCO 2 Apr 2025 Rev4";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -233,13 +233,13 @@ const uint8_t fram_addr = 0x50;
 ESP32Time rtc;
 // uint16_t of seconds is 64k seconds is 18 hours. not quite enough for this.  
 uint32_t       last_display_update_time;         // time last display update happened , in seconds
-const uint16_t display_update_period = 1; // seconds.
+uint16_t display_update_period = 1; // seconds.
 
 uint32_t last_current_update_time;
-const uint16_t current_update_period = 1; // seconds.
+uint16_t current_update_period = 1; // seconds.
 
 uint32_t       last_charger_state_update_time;     // time last charger state update happened , in seconds
-const uint16_t charger_state_update_period = 2; // seconds.
+uint16_t       charger_state_update_period = 2; // seconds.
 
 enum CState{Mowing, Charger_not_init, CC, CV, Done} State; 
 
@@ -267,9 +267,10 @@ uint8_t vmon_ii =0;
 const uint8_t vmon_ii_max =24;
 uint32_t last_vmon_time=0;
 //const uint32_t vmon_period_millis = 1000 / vmon_ii_max ; // roughly 40 ms 
-const uint32_t vmon_period_millis = 2000 / vmon_ii_max ; // roughly 1s for testing
+uint32_t vmon_period_millis = 2000 / vmon_ii_max ; // roughly 1s for testing
 
 bool suspend_vmon_polling = false;
+bool vmon_struct_loaded = false;
 
 struct vpoll_str
 {
@@ -279,7 +280,7 @@ struct vpoll_str
 
 
 uint32_t last_beep_time ;
-const uint32_t beep_on_period = 300;
+uint32_t beep_on_period = 300;
 
 
 #ifdef MEAS_PERF
@@ -296,7 +297,7 @@ bool suspend_psu_polling = false;
 uint8_t psu_ii =0;
 uint32_t last_psu_time=0;
 const uint8_t psu_ii_max = 3;
-const uint32_t psu_period_millis = 2000 / psu_ii_max ; // roughly 300 ms 
+uint32_t psu_period_millis = 2000 / psu_ii_max ; // roughly 300 ms 
 uint8_t psu_addr[] ={ 30, 31, 12 };
 
 void setup (void) {
@@ -326,6 +327,7 @@ void setup (void) {
       vmon[i].gain = -1;
       vmon[i].offset = -1;
     }
+  vmon_struct_loaded = false;
 
   // init imon struct
       imon.current=0.0;
@@ -419,21 +421,33 @@ void setup (void) {
    if (get_SOC(0) == get_SOC(1))
      {
      if (get_SOC(2) != get_SOC(0))
-       write_fram_SOC(2, get_SOC(0));    // is 2 is the odd one out, rewrite it.
+       {
+	 write_fram_SOC(2, get_SOC(0));    // is 2 is the odd one out, rewrite it.
+	 Serial.printf("3rd copy fram differs, set to %d\n", get_SOC(0));
+       }
+     else 
+       Serial.printf("3 fram copies match %d\n", get_SOC(0));
      }
    else if (get_SOC(0) == get_SOC(2))
      {
        if (get_SOC(1) != get_SOC(0))
-	 write_fram_SOC(1, get_SOC(0));    // is 1 is the odd one out, rewrite it.
+	 {
+	   write_fram_SOC(1, get_SOC(0));    // is 1 is the odd one out, rewrite it.
+	   Serial.printf("2nd copy fram differs, set to %d\n", get_SOC(0));
+	 }
      }
    else if (get_SOC(1) == get_SOC(2))
      {
        if (get_SOC(0) != get_SOC(1))
-	 write_fram_SOC(0, get_SOC(1));    // is 1 is the odd one out, rewrite it.
-     } 
+	 {
+	   write_fram_SOC(0, get_SOC(1));    // is 1 is the odd one out, rewrite it.
+	   Serial.printf("1st copy fram differs, set to %d\n", get_SOC(1));
+	 }
+     }
    else
      { 
        write_SOC(0, 3600000 * 50);    // initilize to 50% as I have no idea
+       Serial.printf("all fram copies differ, set to %d\n", get_SOC(1));
      }       
    soc = get_SOC(0);
 
@@ -522,13 +536,10 @@ void loop (void)
 	}
       else
 	{
-	  // Serial.printf("ccpin=%d, notccpin=%d, soc<beept=%d\n",
-	  // 		digitalRead(charger_connected_pin), !digitalRead(charger_connected_pin),
-	  // 		(soc < beep_SOC));
 	  if (!digitalRead(charger_connected_pin) && (soc < beep_SOC))
 	    {
 #ifdef DC_BEEPER
-	      Serial.printf("setting beeper on\n");
+	      // Serial.printf("setting beeper on\n");
 	      digitalWrite(buz_en_pin, 1);
 #else
 	      ledcWriteTone(buz_en_pin, freq_beep);
@@ -618,7 +629,7 @@ void loop (void)
       last_psu_time = millis();
     }
   
-  //   update diaplay on mcc
+  //   update display on mcc
   if (rtc.getEpoch() > (last_display_update_time + display_update_period))
     {
       uint8_t i;
@@ -663,6 +674,11 @@ void loop (void)
   // update charger state if its due
   if (millis()  > (last_charger_state_update_time + charger_state_update_period))
     {
+      // don't do much of this if I don't have a few readings from every vmon. Like when I'm bench testing a component.
+      if (vmon_struct_loaded == false)
+	if ((vmon[0].received > 20) && (vmon[1].received > 20) && (vmon[2].received > 20) && (vmon[3].received > 20))
+	  vmon_struct_loaded = true;
+      
       if ( (State == Mowing) && (digitalRead(charger_connected_pin)==1))
 	// hmmm, what about if I was mowing and now Im not.
 	State = Charger_not_init;
@@ -670,8 +686,9 @@ void loop (void)
       if (digitalRead(charger_connected_pin)==0)
 	{
 	  State = Mowing;
-	  if ((vmon[0].volt < min_battery_voltage) ||(vmon[1].volt < min_battery_voltage) ||
-	      (vmon[2].volt < min_battery_voltage) ||(vmon[3].volt < min_battery_voltage))
+	  if (vmon_struct_loaded && 
+	      ((vmon[0].volt < min_battery_voltage) ||(vmon[1].volt < min_battery_voltage) ||
+	       (vmon[2].volt < min_battery_voltage) ||(vmon[3].volt < min_battery_voltage)))
 	    { // a battery voltage is too low, set soc to 0% so beeping should start
 	      soc  =  0;
 	      write_SOC(0, soc );
@@ -884,6 +901,7 @@ void parse_buf (char * in_buf)
   //          G[VI] adc gain   current=local adc voltage=DPM8624
   //          P[VI] psu offset voltage =local adc voltage=DPM8624
   //          S     SOC total capacity in mA.S i guess
+  //          u     see update periods
   // Wf Field,
   //    where Field could be (volatile stuff in lower case)
   //          Mx mac    WMP=<12 ascii hex digits>  mac for Psu or Mcc or Cmt
@@ -894,6 +912,7 @@ void parse_buf (char * in_buf)
   //          p=b    polling  enable 1 or disable 0  vmon polling.
   //          s=n     set SOC  0..100
   //          d=display WD0=string   write display line 0..7 with given string
+  //          u[scd]=%d   set update period of state machine/currentSOC/display/psu/beep/vmon to d seconds (ms last 3).
   //
   //          II=f   initial charge current
   //          IV=f   initial charge voltage
@@ -1041,6 +1060,10 @@ void parse_buf (char * in_buf)
 	  break;
 	case 'V':
 	  Serial.println(version);
+	  break;
+	case 'u':
+	  Serial.printf("update periods vmon_poll=%dms beep_on=%dms psu_read=%dms\n", vmon_period_millis, beep_on_period, psu_period_millis);
+	  Serial.printf("display_update=%ds SOC_update=%ds state_mc=%ds\n", display_update_period, current_update_period, charger_state_update_period);
 	  break;
 	}
       break;
@@ -1227,6 +1250,24 @@ void parse_buf (char * in_buf)
 	      }	    
 	  }
 	break;
+
+      case  'u' :
+	match =  sscanf(in_buf, "Wu%c=%d", &field, &value);
+	if ((match == 2) && (field == 's'))
+	  charger_state_update_period = value;
+	else if ((match == 2) && (field == 'c'))
+	  current_update_period = value;
+	else if ((match == 2) && (field == 'd'))
+	  display_update_period = value;
+	else if ((match == 2) && (field == 'p'))
+	  psu_period_millis = value;
+	else if ((match == 2) && (field == 'b'))
+	  beep_on_period = value;
+	else if ((match == 2) && (field == 'v'))
+	  vmon_period_millis = value;
+	break;
+
+
       }      
       break;
       // end of 'W'
@@ -1264,8 +1305,8 @@ void set_psu_v(float volt)
   sprintf(outgoing_data.message, ":01w10=%04d,\n", (int32_t) (100.0 * ((volt/psu_gain) -psu_offset)));
   // Serial.printf(" volt=%f  made %s g=%f o=%f\n", volt, outgoing_data.message, psu_gain, psu_offset);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-  suspend_psu_polling=false;
   delay(30);
+  suspend_psu_polling=false;
 }
 
 void set_psu_i(float current)
@@ -1274,8 +1315,8 @@ void set_psu_i(float current)
   delay(30);
   sprintf(outgoing_data.message, ":01w11=%05d,\n", (int32_t ) 1000.0 * current);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-  suspend_psu_polling=false;
   delay(30);
+  suspend_psu_polling=false;
 }
 
 void set_psu_e(int value)
@@ -1285,8 +1326,8 @@ void set_psu_e(int value)
   delay(30);
   sprintf(outgoing_data.message, ":01w12=%1d,\n",  value);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-  suspend_psu_polling=false;
   delay(30);
+  suspend_psu_polling=false;
 }
 
 uint32_t get_SOC (uint16_t address)

@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-04-02 10:20:11 john"';
+// my $ver =  'mcc  Time-stamp: "2025-04-02 13:20:08 john"';
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -66,7 +66,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint8_t msgbuflen= 128;  // for wifi transfers
 uint8_t return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 1 Apr 2025 Revc";
+const char * version = "MCC 2 Apr 2025 Reva";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
