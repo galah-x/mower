@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-02 14:47:30 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-02 15:37:42 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -130,7 +130,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 2 Apr 2025 Rev4";
+const char * version = "MCO 2 Apr 2025 Rev5";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -892,6 +892,7 @@ void parse_buf (char * in_buf)
   //          c scaled charger voltage, current, enable
   //          s SOC
   //          st state
+  //          p show polling state
   //          M Show macs
   //          V=version
   //          I=initial charge current, voltage
@@ -909,7 +910,7 @@ void parse_buf (char * in_buf)
   //          cv=f    charger voltage   set psu V
   //          ci=f    charger current   set psu I
   //          ce=b   charger enable    set pse e
-  //          p=b    polling  enable 1 or disable 0  vmon polling.
+  //          p[vp]=b    polling  enable 1 or disable 0  vmon polling.
   //          s=n     set SOC  0..100
   //          d=display WD0=string   write display line 0..7 with given string
   //          u[scd]=%d   set update period of state machine/currentSOC/display/psu/beep/vmon to d seconds (ms last 3).
@@ -1065,6 +1066,10 @@ void parse_buf (char * in_buf)
 	  Serial.printf("update periods vmon_poll=%dms beep_on=%dms psu_read=%dms\n", vmon_period_millis, beep_on_period, psu_period_millis);
 	  Serial.printf("display_update=%ds SOC_update=%ds state_mc=%ds\n", display_update_period, current_update_period, charger_state_update_period);
 	  break;
+	case 'p':
+	  Serial.printf("polling suspended for vmon=%d psu=%d\n", suspend_vmon_polling, suspend_psu_polling);
+	  Serial.printf("last poll time vmon=%d psu=%d\n", last_vmon_time, last_psu_time);
+	  break;
 	}
       break;
 
@@ -1102,21 +1107,21 @@ void parse_buf (char * in_buf)
 	break;
       
       case 'p' :
-	if (in_buf[3] == '1')
+	if (in_buf[2] == 'v')
 	  {
-#ifdef DEBUG
-	    Serial.printf("enable vmon polling\n");
-#endif
-	    suspend_vmon_polling = false; // enable polling ie don't suspend polling
+	    if (in_buf[4] == '1')
+	      suspend_vmon_polling = false; // enable polling ie don't suspend polling
+	    else
+	      suspend_vmon_polling = true;
 	  }
-	else
+	else if (in_buf[2] == 'p')
 	  {
-#ifdef DEBUG
-	    Serial.printf("disable vmon polling\n");
-#endif
-	    suspend_vmon_polling = true;
+	    if (in_buf[4] == '1')
+	      suspend_psu_polling = false; // enable polling ie don't suspend polling
+	    else
+	      suspend_psu_polling = true;
+	    break;
 	  }
-	break;
 	
       case 's' :
 	match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
