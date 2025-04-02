@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-02 15:37:42 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-02 16:01:58 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -130,7 +130,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 2 Apr 2025 Rev5";
+const char * version = "MCO 2 Apr 2025 Rev6";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -163,6 +163,8 @@ struct charger_str
   float voltage;
   float current;
   uint32_t mostrecent;
+  uint32_t sent;
+  uint32_t received;
   bool  enable;
 } charger ;
 
@@ -362,6 +364,8 @@ void setup (void) {
   charger.current = 0.0;
   charger.enable = 0;
   charger.mostrecent = 0;
+  charger.sent = 0;
+  charger.received = 0;
   State = Charger_not_init;
     
   
@@ -672,7 +676,7 @@ void loop (void)
     }
 
   // update charger state if its due
-  if (millis()  > (last_charger_state_update_time + charger_state_update_period))
+  if (rtc.getEpoch()  > (last_charger_state_update_time + charger_state_update_period))
     {
       // don't do much of this if I don't have a few readings from every vmon. Like when I'm bench testing a component.
       if (vmon_struct_loaded == false)
@@ -1069,6 +1073,8 @@ void parse_buf (char * in_buf)
 	case 'p':
 	  Serial.printf("polling suspended for vmon=%d psu=%d\n", suspend_vmon_polling, suspend_psu_polling);
 	  Serial.printf("last poll time vmon=%d psu=%d\n", last_vmon_time, last_psu_time);
+	  Serial.printf("psu sent=%d psu received=%d\n", charger.sent, charger.received);
+	  Serial.printf("vmon[0] sent=%d vmon[0] received=%d\n", vmon[0].sent, vmon[0].received);
 	  break;
 	}
       break;
@@ -1310,6 +1316,7 @@ void set_psu_v(float volt)
   sprintf(outgoing_data.message, ":01w10=%04d,\n", (int32_t) (100.0 * ((volt/psu_gain) -psu_offset)));
   // Serial.printf(" volt=%f  made %s g=%f o=%f\n", volt, outgoing_data.message, psu_gain, psu_offset);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+  charger.sent++;
   delay(30);
   suspend_psu_polling=false;
 }
@@ -1320,6 +1327,7 @@ void set_psu_i(float current)
   delay(30);
   sprintf(outgoing_data.message, ":01w11=%05d,\n", (int32_t ) 1000.0 * current);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+  charger.sent++;
   delay(30);
   suspend_psu_polling=false;
 }
@@ -1331,6 +1339,7 @@ void set_psu_e(int value)
   delay(30);
   sprintf(outgoing_data.message, ":01w12=%1d,\n",  value);
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+  charger.sent++;
   delay(30);
   suspend_psu_polling=false;
 }
@@ -1388,6 +1397,7 @@ void do_serial_if_ready (void)
 
 void parse_psu_wifi_buf (char * buf)
 {
+  charger.received++;
   if (buf[0]==':')
     {
       if ((buf[3]=='o') && (buf[4]=='k'))
