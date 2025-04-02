@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-02 16:01:58 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-02 16:18:12 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -162,6 +162,8 @@ struct charger_str
 {
   float voltage;
   float current;
+  float set_v;
+  float set_i;
   uint32_t mostrecent;
   uint32_t sent;
   uint32_t received;
@@ -298,9 +300,9 @@ struct poll_perf
 bool suspend_psu_polling = false;
 uint8_t psu_ii =0;
 uint32_t last_psu_time=0;
-const uint8_t psu_ii_max = 3;
+const uint8_t psu_ii_max = 5;
 uint32_t psu_period_millis = 2000 / psu_ii_max ; // roughly 300 ms 
-uint8_t psu_addr[] ={ 30, 31, 12 };
+uint8_t psu_addr[] ={ 30, 31, 12, 10, 11 };
 
 void setup (void) {
   Wire.begin();   //   Including Wire.begin seems to break FRAM ???
@@ -1009,8 +1011,10 @@ void parse_buf (char * in_buf)
 	  Serial.printf("current time %d %s\n", rtc.getEpoch(), rtc.getTime()); 
 	  break;
 	case 'c' :
-	  Serial.printf("charger voltage=%1.2f current=%1.3f enable=%d updated  %d seconds ago \n",
+	  Serial.printf("charger act_voltage=%1.2f act_current=%1.3f enable=%d updated  %d seconds ago \n",
 			charger.voltage, charger.current, charger.enable, rtc.getEpoch() - charger.mostrecent); 
+	  Serial.printf("charger set_voltage=%1.2f set_current=%1.3f\n",
+			charger.set_v, charger.set_i); 
 	  break;
 	case 's' : // FIXME enum CState{} State; 
 
@@ -1420,6 +1424,12 @@ void parse_psu_wifi_buf (char * buf)
 	      else if (cmdaddr == 31)
 		//	      Serial.printf("psu: meas_current=%d.%03dA\n", value/1000, value % 1000);  
 		charger.current = (float) value / 1000.0;
+	      else if (cmdaddr == 10)
+		//	      Serial.printf("psu: meas_current=%d.%03dA\n", value/1000, value % 1000);  
+		charger.set_v = (float) value / 100.0;
+	      else if (cmdaddr == 11)
+		//	      Serial.printf("psu: meas_current=%d.%03dA\n", value/1000, value % 1000);  
+		charger.set_i = (float) value / 1000.0;
 	      else if (cmdaddr == 12)
 		if (value == 0)
 		  charger.enable = 0;
