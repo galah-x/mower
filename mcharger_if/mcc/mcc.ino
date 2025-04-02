@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-04-02 13:20:08 john"';
+// my $ver =  'mcc  Time-stamp: "2025-04-01 11:32:16???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -14,19 +14,17 @@
    It gets instructed by the MCO in the mower as to what to do.
    The model where I can control it either serially from the esp32 debug terminal, or using
    the same commands across esp_now from the MCO seems to work ok for test + development. */
+// NB, logging now writes in 4K chunks to minimize RmodifyW delays as part of locating logging
+//     crazy 10s delays. Which were predominately a broken ESP32Time when Time wasn't set to > year 1980.   
+//     Should help CDcard wear levelling no end also. Downside is you need to use the UI to turn
+//     off logging (which flushes then closes the file) prior to power down if you want
+//     the last ~~10 minutes of logs.
+//     The 4k write seems to take 40ms. hopefully thats not generally noticeable.
 
-/* NB, logging now writes in 4K chunks to minimize RmodifyW delays as part of locating logging
-     crazy 10s delays. Which were predominately a broken ESP32Time when Time wasn't set to > year 1980.   
-     Should help CDcard wear levelling no end also. Downside is you need to use the UI to turn
-     off logging (which flushes then closes the file) prior to power down if you want
-     the last ~~10 minutes of logs.
-     The 4k write seems to take 40ms. hopefully thats not generally noticeable.
-     Going to change the default logfile state to closed  as stuff keeps going missing. */
-
-/* test cmt MAC is 5c013b6c9938
-   test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
-   test psu MAC is       wifi to serial adapter for the power supply. Originally a vichy mm adaptor
-   test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController */
+// test cmt MAC is 5c013b6c9938
+// test mco MAC is      which replaces the cmt later in the dev process Mower COntroller
+// test psu MAC is       wifi to serial adapter for the power supply. Originally a vichy mm adaptor
+// test mcc MAC (ME) is 5c013b6cf4fc   MowerChargeController
 
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
@@ -44,7 +42,7 @@
 #include "SD.h"            // SD apparently uses ram more effectively than SDFat
 #include "SPI.h"           // SPI access to sd card
 
-// #define DEBUG
+//#define DEBUG
 
 // for preferences
 #define RW_MODE false
@@ -57,7 +55,7 @@ const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 uint8_t serial_buf[record_size];
 uint8_t serial_buf_pointer;
 
-// this is used to buffer up the SD logging
+// this is used to beffer up the SD logging
 const uint16_t sdblksize = 4096; // blksize is always 512, cluster size usually 4k. 
 uint8_t sdbuf[sdblksize];
 uint16_t sdbuf_ptr;
@@ -66,7 +64,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint8_t msgbuflen= 128;  // for wifi transfers
 uint8_t return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 2 Apr 2025 Reva";
+const char * version = "MCC 1 April 2025 Reva";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -102,20 +100,17 @@ struct_message response_data;
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&response_data, incomingData, sizeof(response_data));
-#ifdef DEBUG
   Serial.print("received ");
   Serial.print(len);
   Serial.print(" bytes from ");  
   Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
   /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
      fields 12 to 17 seem to be the source MAC. rest isn't obvious */
-#endif
+
   parse_buf(response_data.message, return_buf, msgbuflen);
-#ifdef DEBUG
   Serial.print("parsed responded: ");
   Serial.printf("%s", return_buf);
   Serial.printf((char *) response_data.message);
-#endif
   //** return return_buf to requestor here **
 
   strncpy((char *)response_data.message, (char *) return_buf, msgbuflen);
@@ -182,8 +177,8 @@ const unsigned long temp_update_period = 10; // seconds.
 unsigned long last_psu_update_time;         // time last power supply voltage and current was polled at
 const unsigned long psu_update_period = 2;  // seconds.
 
-// logfile gets written from buffer  when the buffer is full.
-// Manually flush via UI on termination if the last fragment of log is wanted.
+// logfile flushes when the buffer is full.
+// Manually flush via UI on termination if last fragment of log is wanted.
 
 // create lcd object
 hd44780_I2Cexp lcd;
@@ -312,18 +307,15 @@ void setup (void) {
     sdbuf_ptr=0;
     
     if (logging)
-      {
-	open_logfile(false, true); // truncate, justify
-	close_logfile();
-      }
+      open_logfile(false, true); // truncate, justify
 }
 
    
 
 void loop (void)
 {
-  // char     logmsg[30]; // for building logging messages
-  // unsigned long t1;
+  char     logmsg[30]; // for building logging messages
+  unsigned long t1;
   // service serial character if any available.
   do_serial_if_ready();
 
@@ -333,11 +325,11 @@ void loop (void)
   // update temperature and fan state if its due 
   if (rtc.getEpoch() > (last_temp_update_time + temp_update_period))
     {
-      //     hs_temperature=(int) tsense.readTemperature();
-      //     snprintf(logmsg, 30, "Temp=%d", hs_temperature);
+      hs_temperature=(int) tsense.readTemperature();
+      snprintf(logmsg, 30, "Temp=%d", hs_temperature);
       
-      // t1 = millis();
-      // logger(logmsg);
+      t1 = millis();
+      logger(logmsg);
       
       if (hs_temperature > fan_on_temp)
 	{
@@ -494,8 +486,6 @@ void do_menu_1 (void)  // log menu
 	      // turn off logging
 	      logging=0;
 	      show_menu=1;
-	      open_logfile(false, false);
-	      flush();
 	      close_logfile();
 	    }
 	  else
@@ -503,14 +493,12 @@ void do_menu_1 (void)  // log menu
 	      // turn on logging
 	      logging=1;
 	      show_menu=1;
-	      //open_logfile(false, true); // truncate, justify
+	      open_logfile(false, true); // truncate, justify
 	    }
 	}
       if (menu_line == 2) // truncate logfile
 	{
-	  open_logfile(true, false);
-	  close_logfile();
-	  //file.seek(0);
+	  file.seek(0);
 	  sdbuf_ptr=0;
 	}
     }
@@ -609,7 +597,7 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
   uint8_t  field;
   uint8_t  field2;
   uint8_t field3;
-  int32_t  value;
+  int      value;
   uint8_t  mvalue[6]; // mac address
   uint8_t  msg[21];   // 20 chars and 0 terminator
   char     logmsg[30]; // for building logging messages
@@ -629,31 +617,10 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
       {
       case 'B': // logfile block, start address in hex
 	match =  sscanf((char *) in_buf, "RB=%x", &value);
-	// close_logfile();
+	close_logfile();
 	file = SD.open(logfile, FILE_READ);
 	file.seek(value);
-	file.read(out_buf, out_buf_len / 2);
-	close_logfile();
-	// map bytes to a pair of ascii digits. Start with half a buf, and map from the half way point to the top.
-	// work to the start of the buffer
-	int i;
-	int j;
-	int k;
-	int l;
-	for (i= (out_buf_len / 4) -1 ; i>=0 ; i--)
-	  {
-	    j = out_buf[i];
-	    k = i*2+1;
-	    out_buf[k] = '0' + ( j & 0x0f);
-	    if (out_buf[k] > ('0' + 9))
-	      out_buf[k] += 7;    // map 0-9 to 0x30..39 and map 10..15 to 0x41 .. 0x46
-	    k--;
-	    out_buf[k] = '0' + ( j >> 4);
-	    if (out_buf[k] > ('0' + 9))
-	      out_buf[k] += 7;    // map 0-9 to 0x30..39 and map 10..15 to 0x41 .. 0x46
-	    out_buf[out_buf_len/2] = '\n';
-	    out_buf[1+out_buf_len/2] = 0;
-	  }
+	file.read(out_buf, out_buf_len);
 	break;
 
       case 'E':
@@ -680,10 +647,7 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 		 );
 	break;
       case 'S': // logfile length
-	open_logfile(false, false);
-	value = file.size();
-	close_logfile();
-	snprintf((char *)out_buf, out_buf_len, "Logfile=%d\n", value);
+	snprintf((char *)out_buf, out_buf_len, "Logfile=%d\n", file.size());
 	break;
 	
       case 'T':
@@ -785,13 +749,15 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 	break;
 
       case 'T': // truncate logfile
+	close_logfile();
 	open_logfile(true, false);  // truncate logfile, dont justify.
 	close_logfile();            // flush that to the system
+	open_logfile(true, false);  // truncate logfile, dont justify.
 	break;
-
-	// end of 'W'
-      }      
+      }
     break;
+    
+    // end of 'W'
   }    
 }
 
@@ -841,7 +807,7 @@ void logger (char*message)
 // open file for write. 
 void openFile(fs::FS &fs, const char *path) {
   Serial.printf("Opening file: %s\n", path);
-  file = fs.open(path, FILE_APPEND);      // open at end of current file
+  file = fs.open(path, FILE_WRITE);      // open at end of current file
   if (!file) {
     Serial.println("Failed to open file for write");
   }
@@ -870,16 +836,12 @@ void appendtoFile(char *message) {
     { 
       memcpy(sdbuf + sdbuf_ptr, msg, msize);
       sdbuf_ptr= 0;
-      open_logfile(false, false);
       file.write(sdbuf, sdblksize);                   // write seems to take about 40ms.
-      close_logfile();
     }
   else // msg would overfill the buffer
     {
       memcpy(sdbuf + sdbuf_ptr, msg, buf_remaining);  // put first part of message that fits into buffer end
-      open_logfile(false, false);
       file.write(sdbuf, sdblksize);                   // write out the complete buffer to SD
-      close_logfile();
       sdbuf_ptr = msize-buf_remaining;                // set pointer to after the remaining fragment
       memcpy(sdbuf, msg+buf_remaining, sdbuf_ptr);    // copy the remaining message fragment
     }                                                 // to the start of the buffer for next time
@@ -918,9 +880,8 @@ void justify_logfile(void) {
     }
 	  
   // now write as much of the end part of sdbuf as required to bring the file size to a cluster boundary 
-  i=file.write(sdbuf + sdblksize - buf_remaining, buf_remaining);
-  file.flush();
-  Serial.printf("writing blank buf from %d length %d to logfile. Wrote %d\n", sdblksize - buf_remaining, buf_remaining, i);
+  file.write(sdbuf + sdblksize - buf_remaining, buf_remaining);
+  Serial.printf("writing blank buf from %d length %d to logfile\n", sdblksize - buf_remaining, buf_remaining);
 }
 
 void flush (void)
@@ -958,4 +919,3 @@ void listDir(fs::FS &fs, const char *dirname, uint8_t levels) {
     file = root.openNextFile();
   }
 }
-

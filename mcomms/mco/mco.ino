@@ -130,7 +130,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 2 Apr 2025 Rev6";
+const char * version = "MCO 2 Apr 2025 Rev7";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -1329,7 +1329,10 @@ void set_psu_i(float current)
 {
   suspend_psu_polling=true;
   delay(30);
-  sprintf(outgoing_data.message, ":01w11=%05d,\n", (int32_t ) 1000.0 * current);
+
+  sprintf(outgoing_data.message, ":01w11=%05d,\n", (int32_t ) (1000.0 * current));
+  //  Serial.printf("set_psu_i got %f and created message %s", current, outgoing_data.message);
+
   esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
   charger.sent++;
   delay(30);

@@ -44,7 +44,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "IMON WIFI 24 Mar 2025 Revb";
+const char * version = "IMON WIFI 2 Apr 2025 Rev1";
 
 Preferences imonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -212,7 +212,7 @@ void reinit_NVM (void)
   //  our keys and store the initial "factory default" values.
 
   imonPrefs.putUInt("boardid", 1);           // boardID
-  imonPrefs.putFloat("adcgain", -1000.0/0.75);  // approx adc gain term 75mv/100A, 1A=0.75mv
+  imonPrefs.putFloat("adcgain", 1000.0/0.75);  // approx adc gain term 75mv/100A, 1A=0.75mv
   imonPrefs.putFloat("adc0", 0.0);             // adc 0 offset term
   imonPrefs.putBytes("cmtmac", default_cmt_mac, 6);  // mac address of tester
   imonPrefs.putBytes("mcomac", default_mco_mac, 6);  // mac address of mower comms controller 
