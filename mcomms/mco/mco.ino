@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-02 16:18:12 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-02 17:55:23 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -130,7 +130,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 2 Apr 2025 Rev7";
+const char * version = "MCO 2 Apr 2025 Rev8";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -530,6 +530,7 @@ void loop (void)
 
   if (millis() > last_beep_time + beep_on_period)
     {
+      last_beep_time = millis();
       if (last_beep_state)
 	{
 #ifdef DC_BEEPER
@@ -553,7 +554,6 @@ void loop (void)
 	    }
 	  last_beep_state = true;
 	}
-      last_beep_time = millis();
     }
 
 
@@ -561,6 +561,7 @@ void loop (void)
   // update current and SOC state if its due 
   if (rtc.getEpoch() > (last_current_update_time + current_update_period))
     {
+      last_current_update_time = rtc.getEpoch();
       while(adc.isBusy()) {
 	Serial.println("adc is busy?");
 	delay(1000);
@@ -577,12 +578,12 @@ void loop (void)
 	  ledcChangeFrequency(soc_pps_pin, soc_f, 8);
 	  soc_pps_freq = soc_f;
 	}
-      last_current_update_time = rtc.getEpoch();
     }
   
   // perform vmon polling according to the management structure. update all about once per 2 seconds
   if (millis()  > (last_vmon_time + vmon_period_millis))
     {
+      last_vmon_time = millis();
 #ifdef MEAS_PERF
       // record the issue time of voltage polls
       if (vmon.[vmon_ii].letter = 'v') 
@@ -617,13 +618,13 @@ void loop (void)
 		vmon_ii = 0;
 	    }
 	}
-      last_vmon_time = millis();
     }
   
   // poll psu
   // update voltage/current/enable from psu if its due . update all about once per second
   if (millis()  > (last_psu_time + psu_period_millis))
     {
+      last_psu_time = millis();
       if (! suspend_psu_polling)
 	{
 	  sprintf(outgoing_data.message, ":01r%02d=0,\n", psu_addr[psu_ii]);
@@ -632,13 +633,13 @@ void loop (void)
 	    psu_ii = 0;
 	  esp_now_send(psu_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
 	}
-      last_psu_time = millis();
     }
   
   //   update display on mcc
   if (rtc.getEpoch() > (last_display_update_time + display_update_period))
     {
       uint8_t i;
+      last_display_update_time=rtc.getEpoch();
       for (i=0; i< vmons; i++)    // battery voltages
 	{ 
 	  if ((rtc.getEpoch() - vmon[i].mostrecent) <= old_message_time)  
@@ -674,12 +675,13 @@ void loop (void)
       else 
 	sprintf(outgoing_data.message, "WD7=S%1d?%2dC", State, vmon[0].battemp);
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-      last_display_update_time=rtc.getEpoch();
     }
 
   // update charger state if its due
   if (rtc.getEpoch()  > (last_charger_state_update_time + charger_state_update_period))
     {
+      last_charger_state_update_time = rtc.getEpoch();
+
       // don't do much of this if I don't have a few readings from every vmon. Like when I'm bench testing a component.
       if (vmon_struct_loaded == false)
 	if ((vmon[0].received > 20) && (vmon[1].received > 20) && (vmon[2].received > 20) && (vmon[3].received > 20))
@@ -759,7 +761,6 @@ void loop (void)
 	  write_SOC(0, soc );
 	}
       
-      last_charger_state_update_time = rtc.getEpoch();
     }
 
   // 
