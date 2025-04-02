@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'psu  Time-stamp: "2025-03-15 17:36:14 john"';
+// my $ver =  'psu  Time-stamp: "2025-04-03 09:31:11 john"';
 
 // this is the app to run the espnow2serial (vichyctl) on the DPM8624 power supply the mcc talks to.
 // use tools -> board ->  ESP32 Dev module 
@@ -36,24 +36,29 @@ const uint8_t record_size2 = longest_record + 2;    //  char char = nnnnn \n
 char serial2_buf[record_size];
 uint8_t serial2_buf_pointer;
 
+uint32_t last_msg_time_ms;
+bool     timeouts;
+uint32_t timeout_ms;  // going to use millis() for now, prescale.
 
-
+uint32_t last_msg_check_time_ms;
+const uint32_t  msg_check_period_ms = 1000; // 1 second in ms 
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "PSU 15 Mar 2025 Revb";
+const char * version = "PSU 3 Apr 2025 Rev1";
 
 Preferences psuPrefs;  // NVM structure
 // these will be initialized from the NV memory
 
 // variables filled from NVM
-uint8_t cmt_mac[6];
-uint8_t mcc_mac[6];
-uint8_t mco_mac[6];
-uint8_t in_mac[6];  // incoming message source MAC
-int s2baud;
+uint8_t  cmt_mac[6];
+uint8_t  mcc_mac[6];
+uint8_t  mco_mac[6];
+uint8_t  in_mac[6];  // incoming message source MAC
+int      s2baud;
+uint32_t timeout;
 
 typedef struct struct_message {
   char message[msgbuflen];
@@ -94,6 +99,8 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     in_mac[i] = mac[12+i];
   
   Serial.printf("%s\n", incoming_msg.message);   // incoming wifi msg goes to S1 debug terminal
+  last_msg_time_ms = millis();
+  
   if (incoming_msg.message[0] == ':')           // incoming wifi message starting with : goes to S2
     {
       msglen = strlen(incoming_msg.message);
@@ -143,7 +150,9 @@ void setup (void) {
    // init some general variables and IOs 
    serial_buf_pointer = 0;
    serial2_buf_pointer = 0;
-
+   last_msg_time_ms = millis();
+   last_msg_check_time_ms = millis();
+   
    // interestingly, while rx=16 txd=17 is supposedly the default pin allocation,  Serial2 doesn't
    // work without explicitly filling in the pin numbers here
    Serial2.begin(s2baud, SERIAL_8N1, 16, 17);  
@@ -190,6 +199,7 @@ void setup (void) {
       Serial.println("Failed to add peer");
       return;
     }
+
     Serial.println("done setup");
 }
 
@@ -200,14 +210,25 @@ void loop (void)
   // service serial character if any available.
   do_serial_if_ready();
   do_serial2_if_ready();
-
   // a message in from s1 starting with : goes to S2     - erasing sender mac
   // a message in from s1 NOT starting with : is parsed
   // a message in from wifi starting with : goes to S2   - noting sender MAC , and to S1
   // a message in from wifi NOT starting with : is parsed , and to S1. parse results go back to sender mac
   // a message in from s2 goes to S1, and wifi if last received mac is valid
-}
 
+  // let check if a timeout is due about every second. outer loop is more in the event of more timeouts than anything else.
+  if (timeouts && (millis() > (last_msg_check_time_ms + msg_check_period_ms)))
+    {
+      last_msg_check_time_ms = millis();
+      // then see if its more than timeout ms after the last message was received
+      if (millis() > (last_msg_time_ms + timeout_ms))
+	{
+	  // if so, turn off enable, and reset the timeout 
+	  last_msg_time_ms=millis();
+	  Serial2.print(":01w12=0,\r\n");  // explicit turn off enable command to the DPM8624. don't want sparks on charger plugin
+	}
+    }
+}  // the end of loop();
 
 
   
@@ -231,6 +252,7 @@ void reinit_NVM (void)
   //  our keys and store the initial "factory default" values.
 
   psuPrefs.putInt("s2baud", 9600);          // baud rate serial 2 DPM8624
+  psuPrefs.putULong("en_time", 10);          //  disable on no polls for this many seconds. 0 to disable
   psuPrefs.putBytes("mcc_mac", default_mcc_mac, 6); 
   psuPrefs.putBytes("mco_mac", default_mco_mac, 6); 
   psuPrefs.putBytes("cmt_mac", default_cmt_mac, 6); 
@@ -254,7 +276,14 @@ void load_operational_params(void)
    psuPrefs.getBytes("mcc_mac", mcc_mac, 6);           
    psuPrefs.getBytes("mco_mac", mco_mac, 6);           
    psuPrefs.getBytes("cmt_mac", cmt_mac, 6);           
+   timeout = psuPrefs.getULong("en_time");          //  disable on no polls for this many seconds. 0 to disable
 
+   if (timeout != 0)
+     timeouts = true;            // bool flag to enable a timeout check
+   else
+     timeouts = false;
+   timeout_ms = 1000 * timeout;  // precalculated timeout value
+   
    // All done. Last run state (or the factory default) is now restored.
    psuPrefs.end();                                      // Close our preferences namespace.
 }
@@ -265,16 +294,17 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
   // Rf Read and print Field,
   //    where Field could be B baud rate on S2
   //                         M print mac addresses
+  //                         T print enable timeout
   //                         V=version
   // Wf Field,
   //    where Field could be B baud rate on S2
   //                         Mx mac    WMP=<12 ascii hex digits>  mac for mcc or cmt
-  //                        
+  //                         Te=%d     set enable message timeout (in seconds). 0 to disable timeout
   uint8_t read_pointer = 0;
   uint8_t  cmd;
   uint8_t  field;
   uint8_t  field2;
-  int      value;
+  int32_t  value;
   uint8_t  mvalue[6]; // mac address
   uint8_t  msg[21];   // 20 chars and 0 terminator
   char     logmsg[30]; // for building logging messages
@@ -303,6 +333,10 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
 		 mco_mac[0],mco_mac[1],mco_mac[2],mco_mac[3],mco_mac[4],mco_mac[5],
 		 cmt_mac[0],cmt_mac[1],cmt_mac[2],cmt_mac[3],cmt_mac[4],cmt_mac[5]
 		 );
+	break;
+	
+      case 'T':
+	snprintf(out_buf, out_buf_len, "timeout=%d\n", timeout);
 	break;
 
       case 'V':
@@ -341,6 +375,17 @@ void parse_buf (char * in_buf, char * out_buf, int out_buf_len)
       break;
     }      
     break;
+
+    case 'T':  // Timeout
+      match =  sscanf(in_buf, "WT%c=%d",  &field, &value);
+      
+      psuPrefs.begin("psuPrefs", RW_MODE);         // Open our namespace for write
+      if (field == 'e') 
+	psuPrefs.putULong("en_time", value);
+      psuPrefs.end();                              // Close the namespace
+      load_operational_params();
+      break;
+
     // end of 'W'
   }    
 }
