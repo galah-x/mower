@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-02 17:55:23 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-03 12:43:23 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -722,6 +722,7 @@ void loop (void)
       else if ((State == CV) && (charger.current < cutoff_current))
 	{
 	  set_psu_e(0);
+	  soc  =  battery_capacity;  // set soc to 100%
 	  State = Done;
 	}
       else if (State == CV)
