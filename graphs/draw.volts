@@ -14,15 +14,19 @@ my $white  = $image->colorAllocate(255,255,255);
 my $black  = $image->colorAllocate(  0,  0,  0);
 my $red    = $image->colorAllocate(255,  0,  0);
 my $green  = $image->colorAllocate(0,  255,  0);
+my $blue   = $image->colorAllocate(0,   0,  255);
  
 # create a new polyline
 my $polyline = new GD::Polyline;
 my $polyline2 = new GD::Polyline;
 my $polyline3 = new GD::Polyline;
+my $polyline4 = new GD::Polyline;
+
 my $poly_x_axis  = new GD::Polyline;
 my $poly_y_axis  = new GD::Polyline;
 my $poly_y2_axis = new GD::Polyline;
 my $poly_y3_axis = new GD::Polyline;
+my $poly_y4_axis = new GD::Polyline;
                  
 # add some points
 #$polyline->addPt(  0,  0);
@@ -58,12 +62,17 @@ $ymax[3] = 110;
 $ymin[3] = -10;
 $yinv[3] = 1;
 
+# balance
+$ymax[4] = 3;
+$ymin[4] = -20;
+$yinv[4] = 1;
+
 
 
 my $line = 0;
 my $seconds;
 my $volts;
-my $bal0;
+my $bal;
 my $amps;
 my $soc;
 
@@ -73,24 +82,27 @@ while (<>) {
     @_ = split ' ', $_;
     $seconds = $_[0];
     $volts = $_[1];
-    $bal0 = $_[2];
+    $bal = $_[2];
     $amps = $_[3];
     $soc = $_[4];
     $line++;
     $polyline->addPt(&xscale(1, $seconds), &yscale(1, $volts)); 
     $polyline2->addPt(&xscale(1, $seconds), &yscale(2, $amps)); 
     $polyline3->addPt(&xscale(1, $seconds), &yscale(3, $soc)); 
+    $polyline4->addPt(&xscale(1, $seconds), &yscale(4, $bal)); 
 }
 
 &draw_x_axis($poly_x_axis,  1, 1, $ygmax-100, 5,  0, 60000, 3600, $black, "Hours", $xgmax/2, $ygmax-100, 3600  );
 &draw_y_axis($poly_y_axis,  1, 1, 2,   5, 13, 14, 0.1, $black, "Battery Volts", 10, 50  );
 &draw_y_axis($poly_y2_axis, 1, 2, 850, 5,  0, 10, 1.0, $red, "Charge Current A", 860, 50) ;
 &draw_y_axis($poly_y3_axis, 1, 3, 750, 5,  0, 100, 10, $green, "SOC %", 760, 50) ;
+&draw_y_axis($poly_y4_axis, 1, 4, 650, 5,  0,  1,  1, $blue,  "Bal",   660, 50) ;
 
 # draw the polyline curves
 $image->polydraw($polyline,$black);
 $image->polydraw($polyline2,$red);
 $image->polydraw($polyline3,$green);
+$image->polydraw($polyline4,$blue);
  
  
 # output the png
