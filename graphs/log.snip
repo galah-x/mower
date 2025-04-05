@@ -1,0 +1,41 @@
+#!/usr/bin/perl
+
+# tool to extract things from mcc logfile
+
+# time(s)  # b1v
+
+my $secs;
+my $voltage;
+my $balance;
+my $current;
+my $soc;
+
+while (<>) {
+
+  # 00:01:36:01 B0 1 13.124V B0 
+  # if (/(\d\d):(\d\d):(\d\d):(\d\d)\sB0\s1\s([\d\.]+)V\sB(\d)/)
+  if (/(\d\d):(\d\d):(\d\d):(\d\d)\sB0\s1\s([\d\.]+)V\sB(\d)/)
+    {
+      $secs = $1*24*3600 + $2*3600 + $3*60 + $4;
+      $voltage = $5;
+      $balance = $6;
+    }
+
+  if (/(\d\d):(\d\d):(\d\d):(\d\d)\sB5\sI=([\d\.\-]+)\s?$/)
+    {
+#      my $secs = $1*24*3600 + $2*3600 + $3*60 + $4;
+      $current = $5;
+#      print "$secs $voltage $balance $current\n" if (defined $voltage);
+#      undef $voltage;
+    }
+
+  if (/(\d\d):(\d\d):(\d\d):(\d\d)\sB6\sSOC=\s?(\d+)%/)
+    {
+      $soc = $5;
+      print "$secs $voltage $balance $current $soc\n" if ((defined $voltage) && (defined $current));
+      undef $voltage;
+      undef $current;
+    }
+}
+
+
