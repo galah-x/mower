@@ -1,0 +1,265 @@
+#!/usr/bin/perl -w
+#    -*- Mode: cperl     -*-
+# emacs automagically updates the timestamp field on save
+# my $ver =  'test_logs   Time-stamp: "2025-04-07 16:27:12 john"';
+
+# this script is to try and exercise the mcc logger. Its duplicating log chunks
+
+# test environment
+# access mcc via cmt serially attached
+# logging
+
+use strict;
+use  Getopt::Long;
+use Time::HiRes qw/sleep/;
+use POSIX qw(strftime);
+use POSIX qw(:termios_h);
+use IO::Handle;
+use Fcntl qw( O_RDONLY O_RDWR O_NOCTTY);
+
+my $cmtport = "/dev/ttyUSB2";
+my $baud = 115200;
+my $lh;
+my $l;
+my $gap = 0.01;
+my $msgs = 200;
+my $logfile = "test_mcc_logging.log";
+
+# If i is a member of cal, then cal that board, don't just cal check it. --CAL 1234 means cal all 4.
+
+&GetOptions (
+	     'cmtport=s', \$cmtport,
+	     'baud=s',    \$baud,
+	     'gap=s',    \$gap,
+	     'messages=s', \$msgs
+	    );
+
+
+#printf ("%f %f\n", &get_v(), &get_i());
+(my $sh, my $success) = &openserial($cmtport,$baud);
+print "open serial success=$success\n" if ($success !=1);
+
+# handle interrupt more cleanly, by closing logfile prior to exit. which should flush it.
+$SIG{INT} = sub { close $lh; die "close logfile and exit\n";};
+$SIG{TERM} = sub { close $lh; die "close logfile and exit\n";};
+
+
+$lh = &open_logfile();
+# printb(sprintf("board %1d V=%f\n", $board, &read_v($board))); 
+
+if (my $n=  &empty_serial_line($sh)) {
+    print "start emptying $n\n";}
+# printb("disable then enable polling\n");
+
+my $expected_logfilesize;
+my $read_logfilesize;
+
+my $initial_logfilesize = read_logsize();
+printf "started with logfile = %d\n", $initial_logfilesize;
+$expected_logfilesize=0;
+my $logfile_ts_adder = 15;
+
+for (my $i=0; $i<$msgs; $i++) {
+  my $l = pick_random_length(2,12);
+  my $b = int(rand(4));
+  my $letter = chr(($i % 26) + ord('A'));
+   printf "generated %s", build_msg($l, $letter, $b);
+#  print ".";
+  print $sh build_msg($l, $letter, $b);
+  $expected_logfilesize += $logfile_ts_adder + $l;
+  sleep $gap;
+}
+sleep 1;
+my $final_logfilesize = read_logsize();
+my $flag = ($final_logfilesize == ($expected_logfilesize+$initial_logfilesize));
+my $goodness = "BAD";
+if ($flag) {$goodness = "good"};
+printf "read %d expected %d, %s missed by %d added %d\n", $final_logfilesize, $expected_logfilesize+$initial_logfilesize, $goodness, $final_logfilesize - ($expected_logfilesize+$initial_logfilesize), $expected_logfilesize;
+
+
+
+
+close($lh);
+closeserial($sh);
+
+  sub build_msg
+  {
+    my $len  = shift;
+    my $char = shift;
+    my $field = shift;
+    my $msg = sprintf"m1WD%d=%s\n", $field,  $char x ($len-1) ;
+    return $msg;
+  }
+
+  
+sub pick_random_length
+{
+  my $min = shift;
+  my $max = shift;
+  my $len = $max - $min;
+  my $msglen = int(rand($len)) + $min;
+  return $msglen;
+}
+
+
+sub read_logsize
+{
+  if (&empty_serial_line($sh)) {
+    print "read_logsize emptied\n";}
+#  sleep 1;
+  print ("m1RS\n");   # read seek position
+  print $sh ("\n\nm1RS\n");   # read seek position
+  sleep 0.3;
+  $l  = &get_serial_line($sh);
+  print "read  $l from serial\n";
+  $l =~ /Logfile=(\d+)/;
+  unless (defined $1)
+    {
+      $l  = &get_serial_line($sh);
+      print "read  $l from serial second try \n";
+      $l =~ /=([\d\.]+)/;
+    }
+  return $1;
+}
+
+
+
+# print to both logfile and stdout
+sub printb
+{
+  my $string = shift;
+  print $string;
+  print $lh $string;
+}
+
+
+
+sub openserial { 
+    my $port = shift;
+    my $baud = shift;
+
+    # Used to control serial line discipline et cetera
+    my $term;
+    my $cflag=0;
+    # Files etc
+    my ($fd_tty);
+    my $sh;
+    my $success = sysopen($sh, $port, O_RDWR | O_NOCTTY );
+    # See perlfaq8 for details on how the following ioctl's are done 
+    $sh->autoflush(1);
+    $fd_tty = fileno($sh);
+    $term = POSIX::Termios->new();
+    $term->getattr($fd_tty) || die("Failed getattr on tty_in: $!");
+
+   # Set baudrate
+    #    $cflag |= &B38400;
+    $cflag |= (CS8 | CSTOPB ); # 2 stop bits
+    $term->setlflag(0); # Have to have no echo for this to work
+    $term->setiflag( 0);
+    $term->setoflag( 0);
+    $term->setcflag($cflag |  CLOCAL | CREAD );  # local disables modem control
+    $term->setcc(VMIN, 50); 
+    $term->setcc(VTIME, 5); 
+
+    $term->setospeed(&mapbaud($baud));
+    $term->setispeed(&mapbaud($baud));
+    #    printf "getospeed returns %d\n", $term->getospeed;
+    $term->setattr($fd_tty, TCSANOW) || die "Failed setattr tty in : $!";
+    return ($sh,$success);
+}
+
+
+sub get_serial_line
+{
+  my $sh = shift;
+  return <$sh>;
+}
+
+sub empty_serial_line
+{
+  my $buffer;
+  #  my $n;
+  my $sh = shift;
+  #  while($n=sysread($sh,$buffer, 1024))
+  #    {
+  #     printf "emptied %d chars\n", $n;
+  #  }
+  my $readlen =0;
+  while ( poll($sh) )
+    {
+      $readlen += read( $sh , $buffer , 1 );
+    }
+  return $readlen;
+}
+
+sub poll {
+    my ($fh) = @_;
+    my $in = '';
+    vec($in,fileno($fh),1) = 1;
+    return select($in,undef,undef,0);
+}
+
+
+sub mapbaud {
+    my $ret = 13; # 9600 default 
+    my $baud = shift;
+    if ($baud == 1200) {
+        $ret = 9;
+    } elsif ($baud == 1800) {
+        $ret = 10;
+    } elsif ($baud == 2400) {
+        $ret = 11;
+    } elsif ($baud == 4800) {
+        $ret = 12;
+    } elsif ($baud == 9600) {
+        $ret = 13;
+    } elsif ($baud == 19200) {
+        $ret = 14;
+    } elsif ($baud == 38400) {
+        $ret = 15;
+   } elsif ($baud == 57600) {
+        $ret = 4097;
+    } elsif ($baud == 115200) {
+        $ret = 4098;
+    } elsif ($baud == 230400) {
+        $ret = 4099;
+    } elsif ($baud == 460800) {
+        $ret = 4100;
+    } elsif ($baud == 500000) {
+        $ret = 4101;
+    } elsif ($baud == 576000) {
+        $ret = 4102;
+    } elsif ($baud == 921600) {
+        $ret = 4103;
+    } elsif ($baud == 1000000) {
+        $ret = 4104;
+    } elsif ($baud == 1152000) {
+        $ret = 4105;
+    } elsif ($baud == 2000000) {
+        $ret = 4107;
+    } elsif ($baud == 2500000) {
+       $ret = 4109;
+    } elsif ($baud == 3500000) {
+        $ret = 4110;
+    } elsif ($baud == 4000000) {
+        $ret = 4111;
+    }
+    return $ret;
+}
+ 
+
+sub  open_logfile  # for append
+{
+  open($lh, ">>", $logfile) or die "Could not open logfile $logfile for append $!";
+  $lh->autoflush(1);
+  return $lh;
+}
+
+
+sub closeserial {
+  close shift;
+}
+
+
+
+

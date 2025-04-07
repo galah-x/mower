@@ -42,7 +42,7 @@
 #include "SD.h"            // SD apparently uses ram more effectively than SDFat
 #include "SPI.h"           // SPI access to sd card
 
-//#define DEBUG
+// #define DEBUG
 
 // for preferences
 #define RW_MODE false
@@ -55,7 +55,7 @@ const uint8_t record_size = longest_record + 2;    //  char char = nnnnn \n
 uint8_t serial_buf[record_size];
 uint8_t serial_buf_pointer;
 
-// this is used to beffer up the SD logging
+// this is used to buffer up the SD logging
 const uint16_t sdblksize = 4096; // blksize is always 512, cluster size usually 4k. 
 uint8_t sdbuf[sdblksize];
 uint16_t sdbuf_ptr;
@@ -64,7 +64,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint8_t msgbuflen= 128;  // for wifi transfers
 uint8_t return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 1 April 2025 Reva";
+const char * version = "MCC 7 Apr 2025 Rev9";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -101,17 +101,20 @@ struct_message response_data;
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
   memcpy(&response_data, incomingData, sizeof(response_data));
+#ifdef DEBUG
   Serial.print("received ");
   Serial.print(len);
   Serial.print(" bytes from ");  
   Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
   /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
      fields 12 to 17 seem to be the source MAC. rest isn't obvious */
-
+#endif
   parse_buf(response_data.message, return_buf, msgbuflen);
+#ifdef DEBUG
   Serial.print("parsed responded: ");
   Serial.printf("%s", return_buf);
   Serial.printf((char *) response_data.message);
+#endif
   //** return return_buf to requestor here **
 
   strncpy((char *)response_data.message, (char *) return_buf, msgbuflen);
@@ -309,15 +312,17 @@ void setup (void) {
     sdbuf_ptr=0;
     
     if (logging)
-      open_logfile(false, true); // truncate, justify
+      {
+	open_logfile(false, true); // truncate, justify
+	close_logfile();
+      }
 }
-
    
 
 void loop (void)
 {
-  char     logmsg[30]; // for building logging messages
-  unsigned long t1;
+  // char     logmsg[30]; // for building logging messages
+  // unsigned long t1;
   // service serial character if any available.
   do_serial_if_ready();
 
@@ -328,10 +333,10 @@ void loop (void)
   if (rtc.getEpoch() > (last_temp_update_time + temp_update_period))
     {
       hs_temperature=(int) tsense.readTemperature();
-      snprintf(logmsg, 30, "Temp=%d", hs_temperature);
+      //  snprintf(logmsg, 30, "Temp=%d", hs_temperature);
       
-      t1 = millis();
-      logger(logmsg);
+      // t1 = millis();
+      // logger(logmsg);
       
       if (hs_temperature > fan_on_temp)
 	{
@@ -485,9 +490,11 @@ void do_menu_1 (void)  // log menu
 	{
 	  if (logging==1)
 	    {
-	      // turn off logging
+	      // turn off logging, and flush logfile
 	      logging=0;
 	      show_menu=1;
+	      open_logfile(false, false);
+	      flush();   // whatever is in the buffer
 	      close_logfile();
 	    }
 	  else
@@ -495,12 +502,13 @@ void do_menu_1 (void)  // log menu
 	      // turn on logging
 	      logging=1;
 	      show_menu=1;
-	      open_logfile(false, true); // truncate, justify
+	      //open_logfile(false, true); // truncate, justify
 	    }
 	}
       if (menu_line == 2) // truncate logfile
 	{
-	  file.seek(0);
+	  open_logfile(true, false);
+	  close_logfile();
 	  sdbuf_ptr=0;
 	}
     }
@@ -598,8 +606,8 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
   uint8_t  cmd;
   uint8_t  field;
   uint8_t  field2;
-  uint8_t field3;
-  int      value;
+  uint8_t  field3;
+  uint32_t value;
   uint8_t  mvalue[6]; // mac address
   uint8_t  msg[21];   // 20 chars and 0 terminator
   char     logmsg[30]; // for building logging messages
@@ -619,10 +627,11 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
       {
       case 'B': // logfile block, start address in hex
 	match =  sscanf((char *) in_buf, "RB=%x", &value);
-	close_logfile();
+	// close_logfile();
 	file = SD.open(logfile, FILE_READ);
 	file.seek(value);
 	file.read(out_buf, out_buf_len);
+	close_logfile();
 	break;
 
       case 'E':
@@ -649,7 +658,10 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 		 );
 	break;
       case 'S': // logfile length
-	snprintf((char *)out_buf, out_buf_len, "Logfile=%d\n", file.size());
+	open_logfile(false,false);
+	value=file.size();
+	close_logfile();
+	snprintf((char *)out_buf, out_buf_len, "Logfile=%d\n", value);
 	break;
 	
       case 'T':
@@ -689,7 +701,11 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 	  cmax = 7;
 	int l;
 	l=strlen((char *)in_buf);
-	Serial.printf("strlen=%0d\n",l);
+	//	Serial.printf("strlen=%0d\n",l);
+	// this adds trailing blanks to clear the field. dont want that in the log.
+	snprintf(logmsg, 30, "%c %s", in_buf[2], in_buf+4);
+	logger(logmsg);
+
 	for (i=4; i < 4+cmax; i++)
 	  {
 	    out_buf[i-4] = in_buf[i];
@@ -702,8 +718,6 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 	  out_buf[cmax-1]=' ';
 	out_buf[cmax]=0;
 	  
-	snprintf(logmsg, 30, "B%c %s", in_buf[2], out_buf);
-	logger(logmsg);
 	if (! UI_owns_display)
 	  {
 	    lcd.setCursor(field3,field2);
@@ -751,10 +765,11 @@ void parse_buf (uint8_t * in_buf, uint8_t * out_buf, uint8_t out_buf_len)
 	break;
 
       case 'T': // truncate logfile
-	close_logfile();
+#ifdef DEBUG
+	Serial.println("doing log truncate");
+#endif
 	open_logfile(true, false);  // truncate logfile, dont justify.
-	close_logfile();            // flush that to the system
-	open_logfile(true, false);  // truncate logfile, dont justify.
+	close_logfile();            
 	break;
       }
     break;
@@ -788,21 +803,31 @@ void do_serial_if_ready (void)
 
 void open_logfile (bool truncate, bool justify) 
 {
-  openFile(SD, logfile);
+  int i;
   if (truncate)
-    file.seek(0);
+    {
+
+      file = SD.open(logfile, FILE_WRITE);      // open at end of current file
+      i= file.seek(0);
+      file.close();
+#ifdef DEBUG
+      Serial.printf("file.seek returned %d\n", i);
+#endif
+    }
+  openFile(SD, logfile);
   if (justify)
     justify_logfile();
 }
 
 void close_logfile (void)
 {
-  flush();
   file.close();
 }
 
 // logger is called by the rx callback. I suspect that can interrupt itself.
-// so discard any messages that happen while appending.
+// so discard any messages that happen while appending. mco sends 8 display line updates
+// sequentially, so I suspect a message could well arrive while the sdcard is flushing.
+// not sure if the callback is reentrant.
 void logger (char*message)
 { if (logging)
     if (!writing_to_log)
@@ -815,10 +840,10 @@ void logger (char*message)
 
 // open file for write. 
 void openFile(fs::FS &fs, const char *path) {
-  Serial.printf("Opening file: %s\n", path);
-  file = fs.open(path, FILE_WRITE);      // open at end of current file
+  //  Serial.printf("Opening file: %s\n", path);
+  file = fs.open(path, FILE_APPEND);      // open at end of current file
   if (!file) {
-    Serial.println("Failed to open file for write");
+    Serial.println("Failed to open file for append");
   }
 }
 
@@ -835,23 +860,39 @@ void appendtoFile(char *message) {
   snprintf(msg, max_msg_size, "%02d:%s %s\n", rtc.getDay()-1, rtc.getTime(), message); 
   buf_remaining = sdblksize - sdbuf_ptr;
   msize = strlen(msg);
-
+#ifdef DEBUG
+  Serial.printf("msg in=%s logmsg=%s", message, msg);
+#endif
   if (buf_remaining > msize)   // if smaller than remaining buffer space
     { // copy msg into buffer and adjust pointer accordingly
       memcpy(sdbuf + sdbuf_ptr, msg, msize);
       sdbuf_ptr+= msize;
+#ifdef DEBUG
+      Serial.printf("appended %d to buffer, now %d\n", msize, sdbuf_ptr);
+#endif
     }
   else if (buf_remaining == msize)       // if exact fit into remaining buffer space
     { 
       memcpy(sdbuf + sdbuf_ptr, msg, msize);
       sdbuf_ptr= 0;
+      open_logfile(false,false);
       file.write(sdbuf, sdblksize);                   // write seems to take about 40ms.
+      close_logfile();
+#ifdef DEBUG
+      Serial.printf("appended %d to buffer, now %d, wrote buffer\n", msize, sdbuf_ptr);
+#endif
+      
     }
   else // msg would overfill the buffer
     {
       memcpy(sdbuf + sdbuf_ptr, msg, buf_remaining);  // put first part of message that fits into buffer end
+      open_logfile(false,false);
       file.write(sdbuf, sdblksize);                   // write out the complete buffer to SD
+      close_logfile();
       sdbuf_ptr = msize-buf_remaining;                // set pointer to after the remaining fragment
+#ifdef DEBUG
+      Serial.printf("appended %d to buffer, wrote buffer, now %d \n", msize, sdbuf_ptr);
+#endif
       memcpy(sdbuf, msg+buf_remaining, sdbuf_ptr);    // copy the remaining message fragment
     }                                                 // to the start of the buffer for next time
 }
@@ -896,6 +937,7 @@ void justify_logfile(void) {
 void flush (void)
 {
   file.write(sdbuf, sdbuf_ptr);
+  sdbuf_ptr = 0;
 }
 
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels) {
