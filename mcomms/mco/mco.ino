@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-03 12:43:23 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-09 09:03:02 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -103,6 +103,7 @@ struct vmon_pollq
 
 
 
+esp32 gateway
 // #define NOADC
 
 #ifndef NOADC
@@ -130,7 +131,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 2 Apr 2025 Rev8";
+const char * version = "MCO 9 Apr 2025 Rev1";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -829,14 +830,21 @@ void reinit_NVM (void)
   mcoPrefs.putFloat("icc", 10.0);            // initial charge current
   mcoPrefs.putFloat("icv", 55.2);            // initial charge voltage 13.8*4 = 55.2
   mcoPrefs.putFloat("tcc",  3.0);            // topoff charge current
-  mcoPrefs.putFloat("tcv", 56.0);            // topoff charge voltage 14.0*4 = 56
+  mcoPrefs.putFloat("tcv", 57.0);            // topoff charge voltage 14.0*4 = 56 57V=14.25/Battery or 3.56 per cell 
+                /* Hmmm. Kings data on 
+                 * https://www.4wdsupacentre.com.au/batteries/lithium/100ah-lithium/100ah-lithium-battery.html
+                 * now says  "The BMS will also perform cell balancing at 3.5V per cell with 35mA of current."
+                 * 3.5V per cell is 14V for the battery or 56V for the 4. So I need to be a bit above 14V per battery 
+                 * The battery is rated for 14.4 (14.6?) max charge voltage, so 14.25 may be a better choice.
+		 * also kings says 80% depth of discharge, so I may bump up to 20% */
+                               
   mcoPrefs.putFloat("tc",  3.0);             // transition current
   mcoPrefs.putFloat("fc",  0.3);             // final current
   mcoPrefs.putFloat("maxbv", 14.3);          // max single battery voltage
   mcoPrefs.putFloat("minbv", 11.5);          // min single battery voltage
   mcoPrefs.putFloat("bbv",  13.8);           // start balancing battery above this voltage 3.45 * 4 =13.8 
   mcoPrefs.putFloat("bbt",  0.005);          // battery balance tolerance
-  mcoPrefs.putLong("bsoc",  36000000);       // beep SOC, 10%
+  mcoPrefs.putLong("bsoc",  72000000);       // beep SOC, 20%
   mcoPrefs.putLong("bcap", 360000000);       // battery capacity in mAS  100AH = 360e6 maS 
   mcoPrefs.putULong("omt", 10);              // what defines an OLD message. in seconds.
   mcoPrefs.putBool("nvsInit", true);            // Create the "already initialized"
