@@ -3745,6 +3745,16 @@
 		)
 		(uuid "84b89a67-b413-4b95-a4c9-e12437301c32")
 	)
+	(text "Charger_connected was added after Rev1 PCB was drawn"
+		(exclude_from_sim no)
+		(at 105.41 14.732 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "a4c0f6a3-0854-4db6-b946-2643ea71351b")
+	)
 	(text "BZ1 not fitted\nWIRE TO J4 INSTEAD"
 		(exclude_from_sim no)
 		(at 204.724 45.974 0)
@@ -3852,6 +3862,12 @@
 		(uuid "49776af5-b098-4c67-8757-40570fc95890")
 	)
 	(junction
+		(at 99.06 19.05)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "49ff1acd-de60-4969-bb69-e2bdd741144c")
+	)
+	(junction
 		(at 91.44 129.54)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -3898,6 +3914,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "d01a449c-3afe-4351-a35c-f5f94cce021c")
+	)
+	(junction
+		(at 45.72 64.77)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e0521617-ae87-482c-b59b-da0ebea5e283")
 	)
 	(junction
 		(at 83.82 124.46)
@@ -4187,6 +4209,16 @@
 	)
 	(wire
 		(pts
+			(xy 118.11 19.05) (xy 99.06 19.05)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2d5fbecc-7664-4834-ae9d-9b63b73d42ad")
+	)
+	(wire
+		(pts
 			(xy 137.16 45.72) (xy 107.95 45.72)
 		)
 		(stroke
@@ -4247,6 +4279,16 @@
 	)
 	(wire
 		(pts
+			(xy 129.54 71.12) (xy 118.11 71.12)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "33e3c3d6-6fb7-46e2-a3a1-41339efd594e")
+	)
+	(wire
+		(pts
 			(xy 156.21 175.26) (xy 143.51 175.26)
 		)
 		(stroke
@@ -4254,6 +4296,16 @@
 			(type default)
 		)
 		(uuid "348dfa82-2921-4c85-9497-1da99b5ee972")
+	)
+	(wire
+		(pts
+			(xy 19.05 15.24) (xy 66.04 15.24)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "38eed193-39d5-4aca-8415-000a838e76c4")
 	)
 	(wire
 		(pts
@@ -4334,6 +4386,16 @@
 			(type default)
 		)
 		(uuid "40b47a05-b33d-44bc-a320-adfcc4c5e8be")
+	)
+	(wire
+		(pts
+			(xy 45.72 64.77) (xy 45.72 55.88)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "423092b0-184e-435a-8d0c-dc6013ed3c4a")
 	)
 	(wire
 		(pts
@@ -4567,6 +4629,16 @@
 	)
 	(wire
 		(pts
+			(xy 118.11 71.12) (xy 118.11 19.05)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5f19bbf0-2a21-4518-b876-d854e2e6b55f")
+	)
+	(wire
+		(pts
 			(xy 100.33 64.77) (xy 93.98 64.77)
 		)
 		(stroke
@@ -4594,6 +4666,16 @@
 			(type default)
 		)
 		(uuid "620fe994-944c-46a5-9118-528985b0a6d2")
+	)
+	(wire
+		(pts
+			(xy 73.66 19.05) (xy 99.06 19.05)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6237f332-c7c7-46f2-92ff-f37dee66d383")
 	)
 	(wire
 		(pts
@@ -5027,6 +5109,16 @@
 	)
 	(wire
 		(pts
+			(xy 45.72 55.88) (xy 19.05 55.88)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "965114ce-b4d5-4ed3-9eec-71fbcf7d47e4")
+	)
+	(wire
+		(pts
 			(xy 125.73 138.43) (xy 125.73 88.9)
 		)
 		(stroke
@@ -5237,6 +5329,16 @@
 	)
 	(wire
 		(pts
+			(xy 45.72 64.77) (xy 46.99 64.77)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b95c57e6-75b5-41ab-97fd-96b597af6d5f")
+	)
+	(wire
+		(pts
 			(xy 58.42 170.18) (xy 52.07 170.18)
 		)
 		(stroke
@@ -5254,6 +5356,16 @@
 			(type default)
 		)
 		(uuid "bf375a29-aba4-482d-8a72-f31e2f7dee2c")
+	)
+	(wire
+		(pts
+			(xy 99.06 19.05) (xy 99.06 20.32)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c0f2af26-7628-4bfd-b48f-e05787cc9c30")
 	)
 	(wire
 		(pts
@@ -5427,6 +5539,16 @@
 	)
 	(wire
 		(pts
+			(xy 19.05 55.88) (xy 19.05 15.24)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d693a717-cfae-427c-abf4-2bbdfea73e2c")
+	)
+	(wire
+		(pts
 			(xy 152.4 133.35) (xy 128.27 133.35)
 		)
 		(stroke
@@ -5507,7 +5629,7 @@
 	)
 	(wire
 		(pts
-			(xy 40.64 64.77) (xy 46.99 64.77)
+			(xy 40.64 64.77) (xy 45.72 64.77)
 		)
 		(stroke
 			(width 0)
@@ -5577,6 +5699,16 @@
 	)
 	(wire
 		(pts
+			(xy 99.06 27.94) (xy 99.06 31.75)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f42ceb55-c58d-47f8-a6d8-29ef13ac12b7")
+	)
+	(wire
+		(pts
 			(xy 118.11 83.82) (xy 129.54 83.82)
 		)
 		(stroke
@@ -5584,6 +5716,16 @@
 			(type default)
 		)
 		(uuid "f4a8e120-0d73-4365-82e7-05fde287a46d")
+	)
+	(wire
+		(pts
+			(xy 66.04 19.05) (xy 66.04 15.24)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f526f389-50cf-4775-a1fb-e2c88ba0f610")
 	)
 	(wire
 		(pts
@@ -5954,6 +6096,16 @@
 			(justify left bottom)
 		)
 		(uuid "c199363b-1b0f-4e9d-91db-2d74a813802d")
+	)
+	(label "CHARGER_CONNECTED"
+		(at 91.44 19.05 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d0251e6b-9b7f-49d4-a807-cd743a663914")
 	)
 	(label "MOSI-"
 		(at 207.01 81.28 0)
@@ -6900,6 +7052,72 @@
 		)
 	)
 	(symbol
+		(lib_id "power:GND")
+		(at 99.06 31.75 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "1ffd7f9d-6a43-4943-8b6b-48058b1d0b35")
+		(property "Reference" "#PWR042"
+			(at 99.06 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "GND"
+			(at 99.06 36.83 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 99.06 31.75 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 99.06 31.75 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 99.06 31.75 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "c59185c4-a9c3-4272-b9f6-323a66331764")
+		)
+		(instances
+			(project "mcomms"
+				(path "/e8fbbf50-7c2b-44e7-9f8e-061934a36ae2"
+					(reference "#PWR042")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "power:+5V")
 		(at 111.76 82.55 0)
 		(unit 1)
@@ -7096,6 +7314,74 @@
 			(project "mcomms"
 				(path "/e8fbbf50-7c2b-44e7-9f8e-061934a36ae2"
 					(reference "H3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R")
+		(at 69.85 19.05 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "298dd3d1-037f-4456-a426-08a138d68849")
+		(property "Reference" "R23"
+			(at 69.85 12.7 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "1M"
+			(at 69.85 15.24 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
+			(at 69.85 20.828 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 69.85 19.05 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Resistor"
+			(at 69.85 19.05 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "c396841b-443f-4e71-81d8-9c5c62efd9a9")
+		)
+		(pin "2"
+			(uuid "891434bc-7b4b-4ea5-a0f7-3b0aa6eeb867")
+		)
+		(instances
+			(project "mcomms"
+				(path "/e8fbbf50-7c2b-44e7-9f8e-061934a36ae2"
+					(reference "R23")
 					(unit 1)
 				)
 			)
@@ -8558,6 +8844,76 @@
 			(project ""
 				(path "/e8fbbf50-7c2b-44e7-9f8e-061934a36ae2"
 					(reference "U1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R")
+		(at 99.06 24.13 180)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "5a98556a-ba39-411e-b47c-33890ec52c30")
+		(property "Reference" "R24"
+			(at 101.6 22.8599 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(property "Value" "68K"
+			(at 101.6 25.3999 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
+			(at 100.838 24.13 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 99.06 24.13 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Resistor"
+			(at 99.06 24.13 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "be6a2ae3-599b-4d8a-be85-0b4f7445cfd1")
+		)
+		(pin "2"
+			(uuid "d200c383-1722-488a-95e1-c282cfa1dee6")
+		)
+		(instances
+			(project "mcomms"
+				(path "/e8fbbf50-7c2b-44e7-9f8e-061934a36ae2"
+					(reference "R24")
 					(unit 1)
 				)
 			)
