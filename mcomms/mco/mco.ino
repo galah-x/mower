@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-11 09:39:30 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-11 10:07:34 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -219,6 +219,7 @@ void setup (void) {
      }       
    soc = get_SOC(0);
 
+#ifdef ADC_FITTED
   Serial.println("init ADS1115");
    // init adc
    if(!adc.init()){
@@ -230,7 +231,8 @@ void setup (void) {
    adc.setConvRate(ADS1115_8_SPS);              // 8 samples per sec, slowest.
    adc.setAlertPinMode(ADS1115_DISABLE_ALERT);  // not using voltage range checks
    adc.setMeasureMode(ADS1115_CONTINUOUS);          // initiate measurements
-
+#endif
+   
    // init esp_now wifi 
    WiFi.mode(WIFI_STA);
 

@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco state machine  Time-stamp: "2025-04-11 09:39:33 john"';
+// my $ver =  'mco state machine  Time-stamp: "2025-04-11 12:12:34 john"';
 
 // main functions for loop() in mco,  the state machine implementing the main runtime functionality
 
@@ -35,23 +35,53 @@ void update_charge_state_machine (void)
   // items below here mean the charger is plugged in. It may not necessarily be either turned on on nor enabled.
   else if (State == Charger_not_init)
     { // as I don't know if the charger is actually on and listening, repeat this till  
+      set_psu_e(0);  // should already be disabled.
       set_psu_v(initial_charge_voltage);
       set_psu_i(initial_charge_current);
+      // don't leave this state till I'm sure the prior settings were correctly received by the charger
+      if ((charger.voltage >= (initial_charge_voltage - charger_voltage_tol)) 
+	  && (charger.voltage <= (initial_charge_voltage + charger_voltage_tol)) 
+	  && (charger.current >= (initial_charge_current - charger_current_tol)) 
+	  && (charger.current <= (initial_charge_current + charger_current_tol))) 
+	State = Charger_init_CC;
+    }
+  
+  else if (State = Charger_init_CC)
+    {
       set_psu_e(1);
       if (imon.current > (1.1*transition_current)) // charger is now actually charging...)
 	{
+	  // checking the imon current inherantly checks the enable happened.
 	  State = CC;
 	}
     }
+
   else if ((State == CC) && (charger.current < transition_current))
     {
+      set_psu_e(0);
       set_psu_v(topoff_charge_voltage);
       set_psu_i(topoff_charge_current);
-      State = CV;
+      // don't leave this state till I'm sure the prior settings were correctly received by the charger
+      if ((charger.voltage >= (topoff_charge_voltage - charger_voltage_tol)) 
+	  && (charger.voltage <= (topoff_charge_voltage + charger_voltage_tol)) 
+	  && (charger.current >= (topoff_charge_current - charger_current_tol)) 
+	  && (charger.current <= (topoff_charge_current + charger_current_tol))) 
+	State = Charger_init_CV;
     }
+
+
+  else if ((State == Charger_init_CV))
+    {
+      set_psu_e(1);
+      if (imon.current > (topoff_charge_current/2)) // charger is now actually charging...)
+	{
+	  // checking the imon current inherantly checks that the enable happened.
+	  State = CV;
+	}
+    }
+
   else if ((State == CV) && (charger.current < cutoff_current))
     {
-      set_psu_e(0);
       soc  =  battery_capacity;  // set soc to 100%
       State = Done;
     }
@@ -81,6 +111,14 @@ void update_charge_state_machine (void)
 	else 
 	  vmon[i].balance = 1;
     }
+
+  else if (State == Done)
+    // handle a potential loss of disable packet.
+    // only way out of here is via a power down. Or unplug the charger.
+    set_psu_e(0);
+
+  
+
   
   // check this whenever actually charging.
   if ((State != Mowing) && ( (vmon[0].volt > max_battery_voltage) ||(vmon[1].volt > max_battery_voltage) ||
@@ -154,12 +192,13 @@ void update_beeper_state (void)
 
 void update_SOC_state (void)
 {
-  
-  // not supposed to happen. In fact, cant happen! dont even use this adc.
-  //   while(adc.isBusy()) {
-  //     Serial.println("adc is busy?");
-  //     delay(1000);
-  //   }
+
+#ifdef ADC_FITTED
+  while(adc.isBusy()) {
+    Serial.println("adc is busy?");
+    delay(1000);
+  }
+#endif
   
   soc = get_SOC(0) + (int32_t) (imon.current * 2000.0 * current_update_period);
   if (soc < 0)

@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'data and variables for mco  Time-stamp: "2025-04-11 08:17:32 john"';
+// my $ver =  'data and variables for mco  Time-stamp: "2025-04-11 12:10:41 john"';
 
 
 // test cmt MAC is 5c013b6c9938
@@ -16,7 +16,7 @@
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
 #include "ESP32Time.h"   // must be V2.x or newer. V1.04 takes 5s to return a time string. breaks logging 
-#include <ADS1115_WE.h>   // adc converter
+// #include <ADS1115_WE.h>   // adc converter isn't used and might not be fitted. So lets not depend on it
 // fram
 #include <stdio.h>
 #include <esp_now.h>
@@ -78,13 +78,16 @@ struct vmon_pollq
 
 
 
-// esp32 gateway
-// #define NOADC
+// #define ADC_FITTED
+// ADC is not required locally since the design adc doesn't support negative inputs.
+// an External IMON board is now used. I could redesign the mco board with a instrumentation
+// amplifier likely on split rails.
+// (ie add a local -5V rail for the buffer just like I did on the haflinger battery fan controller BFC. )
+// Maybe if I do a respin of mco. I'm clearly getting old and forgetful :(
 
-#ifndef NOADC
+#ifdef ADC_FITTED
 const uint8_t adc_addr = 0x48;
-
-ADS1115_WE adc = ADS1115_WE(adc_addr); // I2C connected ads1115 16b adcb  Used for battery voltage.
+ADS1115_WE adc = ADS1115_WE(adc_addr); // I2C connected ads1115 16b adcb  designed initially for battery current.
 #endif
 
 // serial is used for debug and for programming NVM
@@ -106,7 +109,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 9 Apr 2025 Rev1";
+const char * version = "MCO 11 Apr 2025 Rev1";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -187,7 +190,7 @@ uint16_t current_update_period = 1; // seconds.
 uint32_t       last_charger_state_update_time;     // time last charger state update happened , in seconds
 uint16_t       charger_state_update_period = 2; // seconds.
 
-enum CState{Mowing, Charger_not_init, CC, CV, Done} State; 
+enum CState{Mowing, Charger_not_init, Charger_init_CC, CC, Charger_init_CV, CV, Done} State; 
 
 
 // FRAM fram;
@@ -245,6 +248,14 @@ uint32_t last_psu_time=0;
 const uint8_t psu_ii_max = 5;
 uint32_t psu_period_millis = 2000 / psu_ii_max ; // roughly 300 ms 
 uint8_t psu_addr[] ={ 30, 31, 12, 10, 11 };
+
+// These values are used to check the charger actually received new
+// settings prior to a state change. I'm not using a reliable transport service.
+// Checks only mean something with the charger output disabled.
+// They are for checking settings, not what the load is causing. 
+const float charger_voltage_tol = 0.2;
+const float charger_current_tol = 0.05;
+
 
 
 const uint8_t default_mac[]     = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
