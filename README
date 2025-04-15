@@ -1,0 +1,57 @@
+Repository for files to upgrade a Ryobi RM480e ride on battery mower
+from its original 4 75AH lead acid batteries
+to Lithium Iron Phosphate (LFP) 100AH batteries
+With a battery balance facility.
+
+The 12V LFP batteries have internal battery balance, to balance the 4 cells each contains.
+This repo is about balancing the 4 12V batteries to each other.
+
+Discussion at https://hackaday.io/project/202788-ryobi-480e-mower-lfp-battery-upgrade-with-balance
+
+Repo signifiant contents:
+
+VMON is the per battery voltage monitor and balance board
+vmon/vmn/vmn.ino    arduino code for an esp32
+vmon/vmon/vmon.pdf  board schematic
+vmon/vmon/gerbers/  board manufacturing info
+vmon/vmon           kicad layout directory
+
+IMON is the current monitor from a current shunt
+imon/imon.ino       arduino code for an esp32
+vmon/imon/imon.pdf  schematic
+there is no imon layout, its hacked onto a vmon board as I discovered a design oversight in the
+adc on the mco board near the runup phase. Too much of a hurry to mow the lawn to wait for a pcb to be made and shipped.
+
+
+MCO is the Mower comms controller board. This is where the mower logic runs.
+mcomms/mco/mco.ino     and other files in that directory is the arduino source for the mco board
+mcomms/mcomms.pdf      board schematic
+mcomms/mcomms          kicad layout files
+mcomms/mcomms/gerbers  pcb manufacturing files
+
+
+MMC is the mower charge controller. Really its a display board next to the power supply with a LCD and
+rotary encoder. It displays each battery voltage and balance state, charger voltage, charge current, charge state, mower temperature.
+mcharger_if/mcharge_if.pdf       schematic
+mcharger_if/mcc/mcc.ino          arduino code, together with remainder of the directory
+mcharger_if/mcharger_if/         kicad layout dir
+mcharger_if/mcharger_if/gerbers  pcb manufacturing information
+
+
+PSU is a wifi to serial converter used to allow mco to control and monitor the replacement charger, made from a 1200W 60V smps module and a DPM8624 remote programmable power supply.
+vichyctl/psu/psu.ino        arduino code for psu
+vichyctl/vichyctl.pdf       schematic for board
+vichyctl/vichyctl/gerbers/  layout files
+vichyctl/vichyctl           kicad layout directory.   Originally a board to permit remote Wifi access to a vichy VC8145 multimeter 
+
+I didn't draw a charger schematic.
+Connect the mains to the smps power supply.
+Connect the 60V out of the SMPS to the input pins of the DPM8624
+Connect the 4 pins on the PSU board (5V, 0V, TX, RX) to the matching 4 control pins on the DPM86224.
+Connect the 2 output pins on the DPM8624 to a charger cable likely repurposed from your old charger
+in the charger plug, add a wire to connect the middle sense pin to +48V, ie charger positive. 
+
+
+
+mower_system_connect is a top level schematic of new stuff in the mower.
+mower_system_connect/mower_system_connect.pdf  
