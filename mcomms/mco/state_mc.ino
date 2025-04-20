@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco state machine  Time-stamp: "2025-04-20 14:03:16 john"';
+// my $ver =  'mco state machine  Time-stamp: "2025-04-20 19:52:35 john"';
 
 // main functions for loop() in mco,  the state machine implementing the main runtime functionality
 
@@ -46,7 +46,7 @@ void update_charge_state_machine (void)
 	State = Charger_init_CC;
     }
   
-  else if (State = Charger_init_CC)
+  else if (State == Charger_init_CC)
     {
       set_psu_e(1);
       if (imon.current > (1.1*transition_current)) // charger is now actually charging...)
