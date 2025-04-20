@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-11 10:07:34 john"';
+// my $ver =  'mco  Time-stamp: "2025-04-20 14:04:17 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -291,9 +291,9 @@ void loop (void)
 {
   // service serial character if any available.
   do_serial_if_ready();
-
-
-    if (millis() > last_beep_time + beep_on_period)
+  
+  
+  if (millis() > last_beep_time + beep_on_period)
     {
       last_beep_time = millis();
       update_beeper_state();

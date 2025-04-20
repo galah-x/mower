@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco state machine  Time-stamp: "2025-04-11 12:12:34 john"';
+// my $ver =  'mco state machine  Time-stamp: "2025-04-20 14:03:16 john"';
 
 // main functions for loop() in mco,  the state machine implementing the main runtime functionality
 
@@ -39,10 +39,10 @@ void update_charge_state_machine (void)
       set_psu_v(initial_charge_voltage);
       set_psu_i(initial_charge_current);
       // don't leave this state till I'm sure the prior settings were correctly received by the charger
-      if ((charger.voltage >= (initial_charge_voltage - charger_voltage_tol)) 
-	  && (charger.voltage <= (initial_charge_voltage + charger_voltage_tol)) 
-	  && (charger.current >= (initial_charge_current - charger_current_tol)) 
-	  && (charger.current <= (initial_charge_current + charger_current_tol))) 
+      if ((charger.set_v >= (initial_charge_voltage - charger_voltage_tol)) 
+	  && (charger.set_v <= (initial_charge_voltage + charger_voltage_tol)) 
+	  && (charger.set_i >= (initial_charge_current - charger_current_tol)) 
+	  && (charger.set_i <= (initial_charge_current + charger_current_tol))) 
 	State = Charger_init_CC;
     }
   
@@ -62,10 +62,10 @@ void update_charge_state_machine (void)
       set_psu_v(topoff_charge_voltage);
       set_psu_i(topoff_charge_current);
       // don't leave this state till I'm sure the prior settings were correctly received by the charger
-      if ((charger.voltage >= (topoff_charge_voltage - charger_voltage_tol)) 
-	  && (charger.voltage <= (topoff_charge_voltage + charger_voltage_tol)) 
-	  && (charger.current >= (topoff_charge_current - charger_current_tol)) 
-	  && (charger.current <= (topoff_charge_current + charger_current_tol))) 
+      if ((charger.set_v >= (topoff_charge_voltage - charger_voltage_tol)) 
+	  && (charger.set_v <= (topoff_charge_voltage + charger_voltage_tol)) 
+	  && (charger.set_i >= (topoff_charge_current - charger_current_tol)) 
+	  && (charger.set_i <= (topoff_charge_current + charger_current_tol))) 
 	State = Charger_init_CV;
     }
 
