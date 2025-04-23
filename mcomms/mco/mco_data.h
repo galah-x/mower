@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'data and variables for mco  Time-stamp: "2025-04-20 19:53:12 john"';
+// my $ver =  'data and variables for mco  Time-stamp: "2025-04-23 18:10:21 john"';
 
 
 // test cmt MAC is 5c013b6c9938
@@ -25,7 +25,7 @@
 // #include "FRAM.h"            // works, but seems incompatible with ADS1115_WE
 #include "Adafruit_FRAM_I2C.h"  // only supports single byte access, but doesn't break ADC.
 
-// #define DEBUG
+#define DEBUG
 // #define MEAS_PERF
 
 #define DC_BEEPER

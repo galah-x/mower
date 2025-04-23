@@ -86,7 +86,7 @@ void load_operational_params(void)
    min_battery_voltage = mcoPrefs.getFloat("minbv");    // min single battery voltage
    batt_balance_voltage = mcoPrefs.getFloat("bbv");     // start balancing a battery above this 3.45 * 4 =13.8
    batt_balance_tol_voltage = mcoPrefs.getFloat("bbt"); // battery balance tolerance
-   beep_SOC = mcoPrefs.getLong("bsoc");                 // beep SOC, 10%
+   beep_SOC = mcoPrefs.getLong("bsoc");                 // beep SOC, 20%
    battery_capacity = mcoPrefs.getLong("bcap");         // battery capacity in mAS  100AH = 360e6 maS 
    fbattery_capacity = (float) battery_capacity;
    old_message_time  = mcoPrefs.getULong("omt");        // what defines an OLD message. in seconds.

@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'parsers for mco  Time-stamp: "2025-04-11 08:04:31 john"';
+// my $ver =  'parsers for mco  Time-stamp: "2025-04-23 18:23:05 john"';
 
 // this is the parsers for app to run the mower comms controller
 // for the Ryobi RM480e mower.
@@ -47,7 +47,7 @@ void parse_buf (char * in_buf)
   //          BA=f   balance above per battery voltage
   //          BT=f   balance tolerance voltage
   //          BM=f   max single battery voltage
-  //          E=d  BEep below this 
+  //          WE=f  BEep below this where f = %f%%  
   //          TV=f   topoff voltage
   //          TI=f   topoff current
   //          TE=f   topoff final current to stop charging
@@ -181,8 +181,8 @@ void parse_buf (char * in_buf)
 			batt_balance_voltage, batt_balance_tol_voltage, max_battery_voltage, min_battery_voltage);
 	  break;
 	case 'E' :
-	  Serial.printf("Beep at or below SOC=%d mAS %d%%\n",
-			beep_SOC, 100*beep_SOC/battery_capacity);
+	  Serial.printf("Beep at or below SOC=%d mAS %1.1f%%\n",
+			beep_SOC, 100.0*beep_SOC/fbattery_capacity);
 	  break;
 	case 'S' :
 	  Serial.printf("Battery capacity=%ld mAS %ldAH\n",
@@ -310,9 +310,9 @@ void parse_buf (char * in_buf)
 	load_operational_params();
 	break;
       case  'E' :
-	match =  sscanf(in_buf, "%c%c=%d", &cmd, &field, &value);
+	match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
 	mcoPrefs.begin("mcoPrefs", RW_MODE);         // Open our namespace for write
-	mcoPrefs.putFloat("bsoc", value);
+	mcoPrefs.putFloat("bsoc", (int32_t) fvalue);
 	mcoPrefs.end();                              // Close the namespace
 	load_operational_params();
 	break;

@@ -41,7 +41,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint8_t msgbuflen= 128;  // for wifi transfers
 uint8_t return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 11 Apr 2025 Rev2";
+const char * version = "MCC 11 Apr 2025 Rev2S";
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory
