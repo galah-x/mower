@@ -312,7 +312,7 @@ void parse_buf (char * in_buf)
       case  'E' :
 	match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
 	mcoPrefs.begin("mcoPrefs", RW_MODE);         // Open our namespace for write
-	mcoPrefs.putFloat("bsoc", (int32_t) fvalue);
+	mcoPrefs.putLong("bsoc", (int32_t) fvalue);
 	mcoPrefs.end();                              // Close the namespace
 	load_operational_params();
 	break;
@@ -355,7 +355,7 @@ void parse_buf (char * in_buf)
       case  'S' :
 	match =  sscanf(in_buf, "%c%c=%f", &cmd, &field, &fvalue);
 	mcoPrefs.begin("mcoPrefs", RW_MODE);         // Open our namespace for write
-	mcoPrefs.putFloat("bcap", fvalue);
+	mcoPrefs.putLong("bcap", fvalue);
 	mcoPrefs.end();                              // Close the namespace
 	load_operational_params();
 	break;
