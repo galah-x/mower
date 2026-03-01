@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2026-03-01 12:54:16 john"';
+// my $ver =  'mco  Time-stamp: "2026-03-01 15:55:20 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -38,30 +38,29 @@ void OnDataSent(const wifi_tx_info_t *mac_addr, esp_now_send_status_t status)
 
 
 // callback function that will be executed when data is received
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, uint8_t len) {
   memcpy(&incoming_data, incomingData, sizeof(incoming_data));
+  uint8_t *mac=esp_now_info->src_addr;
   // Serial.print("received ");
   // Serial.print(len);
   // Serial.print(" bytes from ");  
   // Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
-  /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
-     fields 12 to 17 seem to be the source MAC. rest isn't obvious */
 
   // from psu?  Record polled readings. more differences at end of mac string
-  if ((mac[17] == psu_mac[5]) && (mac[16] == psu_mac[4]) && (mac[15] == psu_mac[3]) &&
-      (mac[14] == psu_mac[2]) && (mac[13] == psu_mac[1]) && (mac[12] == psu_mac[0]))
+  if ((mac[5] == psu_mac[5]) && (mac[4] == psu_mac[4]) && (mac[3] == psu_mac[3]) &&
+      (mac[2] == psu_mac[2]) && (mac[1] == psu_mac[1]) && (mac[0] == psu_mac[0]))
     parse_psu_wifi_buf(incoming_data.message);
   // from imon?  Record unpolled readings
-  else if ((mac[12] == imon.mac[0]) && (mac[13] == imon.mac[1]) && (mac[14] == imon.mac[2]) &&
-      (mac[15] == imon.mac[3]) && (mac[16] == imon.mac[4]) && (mac[17] == imon.mac[5]))
+  else if ((mac[0] == imon.mac[0]) && (mac[1] == imon.mac[1]) && (mac[2] == imon.mac[2]) &&
+      (mac[3] == imon.mac[3]) && (mac[4] == imon.mac[4]) && (mac[5] == imon.mac[5]))
     parse_imon_wifi_buf(incoming_data.message);
   // from a vmon?  Record polled readings
   else {
     uint8_t i;
     for (i=0; i< vmons; i++)
       {
-	if ((mac[17] == vmon[i].mac[5]) && (mac[16] == vmon[i].mac[4]) && (mac[15] == vmon[i].mac[3]) &&
-	    (mac[14] == vmon[i].mac[2]) && (mac[13] == vmon[i].mac[1]) && (mac[12] == vmon[i].mac[0]))
+	if ((mac[5] == vmon[i].mac[5]) && (mac[4] == vmon[i].mac[4]) && (mac[3] == vmon[i].mac[3]) &&
+	    (mac[2] == vmon[i].mac[2]) && (mac[1] == vmon[i].mac[1]) && (mac[0] == vmon[i].mac[0]))
 	  parse_vmon_wifi_buf(incoming_data.message, i);
       }
   }
