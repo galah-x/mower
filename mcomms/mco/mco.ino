@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2025-04-20 14:04:17 john"';
+// my $ver =  'mco  Time-stamp: "2026-03-01 12:54:16 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -31,8 +31,8 @@
 #include "mco_data.h"
 
 
-// wifi callback when data is sent
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+// wifi callback when data is sent (nb type change of the tx_struct for newer esp library)
+void OnDataSent(const wifi_tx_info_t *mac_addr, esp_now_send_status_t status)
 {
 }
 

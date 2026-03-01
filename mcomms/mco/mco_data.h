@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'data and variables for mco  Time-stamp: "2025-04-23 18:10:21 john"';
+// my $ver =  'data and variables for mco  Time-stamp: "2026-02-27 18:16:56 john"';
 
 
 // test cmt MAC is 5c013b6c9938
@@ -109,7 +109,7 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 24 Apr 2025 Rev1";
+const char * version = "MCO 27 Feb 2026 Rev1";
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -255,8 +255,6 @@ uint8_t psu_addr[] ={ 30, 31, 12, 10, 11 };
 // They are for checking settings, not what the load is causing. 
 const float charger_voltage_tol = 0.2;
 const float charger_current_tol = 0.05;
-
-
 
 const uint8_t default_mac[]     = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 const uint8_t default_mcc_mac[] = { 0x5c, 0x01, 0x3b, 0x6c, 0xf4, 0xfc };

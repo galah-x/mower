@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vichyctl add wifi+utp to vichy vc8145 multimeter  Time-stamp: "2025-02-15 19:53:03 john"';
+// my $ver =  'vichyctl add wifi+utp to vichy vc8145 multimeter  Time-stamp: "2026-02-21 12:01:47 john"';
 
 #define CONNECT_TO_NETWORK
 
@@ -26,6 +26,7 @@ bool  locked;           // a semaphore to ensure I don't udp read a string while
 
 //The udp library class
 AsyncUDP udp;
+uint8_t read_hostname[20];
 
 unsigned long millisecs;
 const unsigned long nextpoll = 200;  // milliseconds.
@@ -40,17 +41,28 @@ void setup()
   delay(2000);
   Serial2.begin(9600, SERIAL_8N1, 16, 17); // Serial2 is used for the Vichy connection   
 
-  Serial.print("About to wifi connect\n");
+  
   delay(1000);
   
   //Connect to the WiFi network
 #ifdef CONNECT_TO_NETWORK
-  WiFi.mode(WIFI_STA);
+
+  //  read_hostname  = WiFi.getHostname();
+  //Serial.print("Original hostname is ");
+  //Serial.println(read_hostname);
   
-  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+
+  Serial.print("About to wifi connect as ");
+  Serial.println(hostname);
+  
+  /// WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
   WiFi.setHostname(hostname);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(networkName, networkPswd);
 
+  //read_hostname = WiFi.getHostname();
+  //Serial.print("Current hostname is ");
+  //Serial.println(read_hostname);
   
   if (WiFi.waitForConnectResult() != WL_CONNECTED) {
     Serial.println("WiFi Failed");

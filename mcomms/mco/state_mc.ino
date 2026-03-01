@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco state machine  Time-stamp: "2025-04-20 19:52:35 john"';
+// my $ver =  'mco state machine  Time-stamp: "2026-02-27 18:15:29 john"';
 
 // main functions for loop() in mco,  the state machine implementing the main runtime functionality
 
@@ -56,7 +56,14 @@ void update_charge_state_machine (void)
 	}
     }
 
-  else if ((State == CC) && (charger.current < transition_current))
+
+  //  as at 26 Feb 2026, I see this clause not executing because an unbalanced battery gets to max_battery_voltage before the transition current is reached.
+  // I suspect another condition needs to exit state==CC when any cell gets somewhat close to max_cell_v  .  tcc perhaps should be comparable to balance current too. 
+
+  else if ((State == CC) && ((charger.current < transition_current)
+			     ||
+			     ((vmon[0].volt > batt_balance_voltage) ||(vmon[1].volt > batt_balance_voltage) ||
+			     (vmon[2].volt > batt_balance_voltage) ||(vmon[3].volt > batt_balance_voltage))))
     {
       set_psu_e(0);
       set_psu_v(topoff_charge_voltage);
