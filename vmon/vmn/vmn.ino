@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2025-03-25 13:36:23 john"';
+// my $ver =  'vmn   Time-stamp: "2026-03-02 09:40:37 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -50,7 +50,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "VMON WIFI 23 Mar 2025 Reva";
+const char * version = "VMON espnow 2 Mar 2026 Reva";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -117,8 +117,11 @@ struct_message incoming_data;
 
 esp_now_peer_info_t peerInfo;
 
+// NB the following 2 callbacks are modified to match espnow libraries version 3 as per what I did for mco 1 Mar 2026.
+// Tested to compile, but not programmed to device and tested in anger yet.   mco has been tested to balance as desired.
+
 // wifi callback when data is sent
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+void OnDataSent(const wifi_tx_info_t *mac, esp_now_send_status_t status)
 {
   if (we_poll_cd > 0)
     we_poll_cd--;           // poll counter used to inhibit napping under current testing and voltage cal.
@@ -138,8 +141,10 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 
 
 // callback function that will be executed when data is received
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, uint8_t len) {
   memcpy(&incoming_data.message, incomingData, sizeof(incoming_data));
+  uint8_t *mac=esp_now_info->src_addr;
+
   // Serial.print("received ");
   // Serial.print(len);
   // Serial.print(" bytes from ");  
@@ -148,8 +153,8 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
      fields 12 to 17 seem to be the source MAC. rest isn't obvious */
   
   // from mco? 
-  if ((mac[12] == mco_mac[0]) && (mac[13] == mco_mac[1]) && (mac[14] == mco_mac[2]) &&
-      (mac[15] == mco_mac[3]) && (mac[16] == mco_mac[4]) && (mac[17] == mco_mac[5]))
+  if ((mac[0] == mco_mac[0]) && (mac[1] == mco_mac[1]) && (mac[2] == mco_mac[2]) &&
+      (mac[3] == mco_mac[3]) && (mac[4] == mco_mac[4]) && (mac[5] == mco_mac[5]))
     {
       parse_wifi_buf(incoming_data.message, outgoing_data.message, sizeof(outgoing_data.message));
       esp_now_send(mco_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));

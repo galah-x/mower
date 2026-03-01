@@ -19,9 +19,7 @@ void reinit_NVM (void)
   mccPrefs.putInt("fan_on_temp",  45);          // start fan at this temp if auto_fan
   mccPrefs.putInt("fan_off_temp", 35);          // stop fan at this temp if auto_fan
   mccPrefs.putBytes("psu_mac", default_mac, 6); // mac address of power supply 
-  mccPrefs.putBytes("psu_mac", default_mac, 6); // mac address of power supply 
   mccPrefs.putString("ssid",   "unset");        // network for conventional wifi access 
-  mccPrefs.putString("password", "unset");      // network password for conventional wifi access 
   mccPrefs.putString("password", "unset");      // network password for conventional wifi access 
   mccPrefs.putString("server", "unset");        // network server  for conventional wifi access 
   mccPrefs.putUInt("logport", 5681);             // network server tcp port for conventional wifi access 

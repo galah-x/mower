@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2025-04-01 11:32:16
+// my $ver =  'mcc  Time-stamp: "2026-03-02 10:02:42 john";
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -15,7 +15,7 @@
    The model where I can control it either serially from the esp32 debug terminal, or using
    the same commands across esp_now from the MCO seems to work ok for test + development. */
 // NB, logging now writes in 4K chunks to minimize RmodifyW delays as part of locating logging
-//     crazy 10s delays. Which were predominately a broken ESP32Time when Time wasn't set to > year 1980.   
+//     crazy 10s delays. Which were predominately a broken ESP32Time library when Time wasn't set to > year 1980.   
 //     Should help SDcard wear levelling also. Downside is you need to use the UI to turn
 //     off logging (which flushes then closes the file) prior to power down if you want
 //     the last few lines of logs.
@@ -29,8 +29,15 @@
 #include "mcc_data.h"
 
 // #define DEBUG
+
+// NB. I have edited the following 2 callbacks such that they compile with V3.0 espnow libraries.
+// as per the changes I had to made to tweak mco on 1 Mar 2026 to tweak balancing.
+// Library API changed late last year when I updated esp libraries due to the xiao esp32c6
+// I used in weatherino_temperature.
+// This source is edited, compiles, matches the mco changes, but are NOT tested in anger.
+
 // wifi callback when data is sent
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+void OnDataSent(const wifi_tx_info_t *tx_struct, esp_now_send_status_t status)
 {
   //  Serial.print("\nLast Packet Send Status:\t");
   // Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
@@ -39,15 +46,15 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 struct_message response_data;
 
 // callback function that will be executed when data is received
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+void OnDataRecv(const esp_now_recv_info_t * esp_now_info,  uint8_t *incomingData, uint8_t len) {
   memcpy(&response_data, incomingData, sizeof(response_data));
+  uint8_t *mac=esp_now_info->src_addr;
+
 #ifdef DEBUG
   Serial.print("received ");
   Serial.print(len);
   Serial.print(" bytes from ");  
-  Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
-  /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
-     fields 12 to 17 seem to be the source MAC. rest isn't obvious */
+  Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]) ;
 #endif
   parse_buf(response_data.message, return_buf, msgbuflen);
 #ifdef DEBUG

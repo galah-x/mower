@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'psu  Time-stamp: "2025-04-03 09:31:11 john"';
+// my $ver =  'psu  Time-stamp: "2026-03-02 09:31:33 john"';
 
 // this is the app to run the espnow2serial (vichyctl) on the DPM8624 power supply the mcc talks to.
 // use tools -> board ->  ESP32 Dev module 
@@ -47,7 +47,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "PSU 3 Apr 2025 Rev1";
+const char * version = "PSU 2 Mar 2026 Rev1";
 
 Preferences psuPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -72,8 +72,9 @@ esp_now_peer_info_t peerInfo;
 // function prototype
 void parse_buf(char * in_buf, char * out_buf, int out_buf_len);
 
-// wifi callback when data is sent
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+
+// wifi callback when data is sent. NB this has been modified for v3 espnow libraries along the lines of what I had to do for mco 1 Mar 2026. mco is tested to function, this is only tested to actually compile.
+void OnDataSent(const wifi_tx_info_t *tx_struct, esp_now_send_status_t status)
 {
 }
 
@@ -83,20 +84,20 @@ struct_message incoming_msg;
 int msglen;
 
 // callback function that will be executed when data is received
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, uint8_t len) {
   memcpy(&incoming_msg, incomingData, sizeof(incoming_msg));
+  uint8_t *mac=esp_now_info->src_addr;
+
   //  Serial.print("received ");
-  //Serial.print(len);
-  //Serial.print(" bytes from ");  
-  //  Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[12], mac[13], mac[14], mac[15], mac[16], mac[17]) ;
-  /* I suspect the mac' field here is the 24 byte mac header structure espressif uses
-     fields 12 to 17 seem to be the source MAC. rest isn't obvious */
+  //  Serial.print(len);
+  //  Serial.print(" bytes from ");  
+  //  Serial.printf("%02x%02x%02x%02x%02x%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]) ;
   
   //remember the mac address whom the most recent wifi message is from 
   int i;
   esp_err_t result;
   for (i=0; i<6; i=i+1)
-    in_mac[i] = mac[12+i];
+    in_mac[i] = mac[i];
   
   Serial.printf("%s\n", incoming_msg.message);   // incoming wifi msg goes to S1 debug terminal
   last_msg_time_ms = millis();

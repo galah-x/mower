@@ -1,7 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc_data.h  Time-stamp: "2025-04-01 11:32:16
-
+// my $ver =  'mcc_data.h  Time-stamp: "2026-03-02 09:54:17 john";
 
 #include <Preferences.h>  // the NV memory interface
 #include <Wire.h>
@@ -41,7 +40,8 @@ uint8_t baseMac[6];         // my own mac address
 const  uint8_t msgbuflen= 128;  // for wifi transfers
 uint8_t return_buf[msgbuflen]; // for responses
 
-const char * version = "MCC 11 Apr 2025 Rev2S";
+const char * version = "MCC 2 Mar 2026 Reva";
+
 
 Preferences mccPrefs;  // NVM structure
 // these will be initialized from the NV memory

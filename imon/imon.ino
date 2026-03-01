@@ -1,19 +1,28 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'imon   Time-stamp: "2025-03-24 14:29:45 john"';
+// my $ver =  'imon   Time-stamp: "2026-03-02 10:27:17 john"';
 
 // this is the app to run an isolated voltage shunt resistor current probe
 // use tools -> board ->  ESP32 Dev module 
 
 /*
-  A vmon is an esp32 with an adc sensing a current shunt and talkign to an mco.
+  An imon is an esp32 with an adc sensing a current shunt and talking to an mco.
   the current shunt inputs are biassed to midrange vcc , 2 510R resistors to 3v3 and gnd.
   
-  Its powerd from an isolateed switcher from 12v, producing about 5V.
+  Its powerd from an isolated switcher from 12v, producing about 5V.
   It chats to mco  via wifi.  This is the esp_now() branch.
 
   Imon contains a calibrated 16 bit ADC to monitor the battery current.
   Imon relays current to the mco, unpolled. About 4x a second.
+
+  An Imon is built on a vmon PCB with a bit of hot glue for the resistors biassing the current shunt
+  midpoint voltage. Much of the vmon componentry is not needed but a vmon with a blown up esp32 board
+  was repaired, modified and used for the original (and best) imon. I slipped when screwing in a battery, got
+  12v on the I2C pin near the positive terminal.  Swapped the esp32 on the dev board as I had run out of
+  dev boards but had some bare esp32 wroom's. Shipping is slow. and the imon was very much an
+  afterthought, to address a design bug related to measuring negative voltage from the current shunt shunt.
+  The business (measuring) end is negative either charging or discharging depending on how you wire it.
+  Somehow I overlooked that in the original design.
 */
 
 // test mco MAC is 5c013b6c6a44  
@@ -44,7 +53,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "IMON WIFI 2 Apr 2025 Rev1";
+const char * version = "IMON espnow 2 Mar 2026 Rev1";
 
 Preferences imonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -57,7 +66,7 @@ float   adc0;
 float   adcgain;
 bool nap;
 
-/* there are no IOs  */
+/* there are no IOs. Well, the I2C bus, but it seems to self manage its io settings.  */
 
 // I2C addresses 
 const uint8_t adc_addr = 0x48;
@@ -82,8 +91,16 @@ typedef struct struct_message {
 struct_message outgoing_data;
 esp_now_peer_info_t peerInfo;
 
+/* NB. I converted the weatherino_temperature from moteino to esp32 xiao in October 2025. The old one broke,
+   and my moteino programmer was broken too.  This required a esp32 library update to get Xiao support.
+   Which brought in V3.0 espnow libraries, which includes an api change for the OnDataRecv callback mac
+   structure.   Discovered this when I had to tweak the mco blaancing state machine.
+   I have edited these 2 callbacks to compile, as per what I did and tested for mco, but this module's
+   code is not burned and tested yet.
+   The stuff that changed doesn't look to affect anything in this board except the compiler. */
+
 // wifi callback when data is sent
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
+void OnDataSent(const wifi_tx_info_t *tx_struct, esp_now_send_status_t status)
 {
       // nap here, as data has just been sent.
   if (nap)
@@ -101,8 +118,12 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 }
 
 // callback function that will be executed when data is received
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len)
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, uint8_t len)
 {
+  //  uint8_t *mac=esp_now_info->src_addr;
+  // Serial.printf("received %d bytes from %02x:%02x:%02x:%02x:%02x:%02x\n",
+  //		len,
+  //		mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 
