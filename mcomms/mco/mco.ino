@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco  Time-stamp: "2026-03-01 15:55:20 john"';
+// my $ver =  'mco  Time-stamp: "2026-03-26 17:40:10 john"';
 
 // this is the app to run the mower comms controller for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -38,7 +38,8 @@ void OnDataSent(const wifi_tx_info_t *mac_addr, esp_now_send_status_t status)
 
 
 // callback function that will be executed when data is received
-void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, uint8_t len) {
+// noting that this is called from a high priority task, so should not do anything slow.
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, int len) {
   memcpy(&incoming_data, incomingData, sizeof(incoming_data));
   uint8_t *mac=esp_now_info->src_addr;
   // Serial.print("received ");

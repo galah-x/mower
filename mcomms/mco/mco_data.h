@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'data and variables for mco  Time-stamp: "2026-03-01 15:55:50 john"';
+// my $ver =  'data and variables for mco  Time-stamp: "2026-03-26 17:17:07 john"';
 
 
 // test cmt MAC is 5c013b6c9938
@@ -109,7 +109,8 @@ uint8_t soc_pc; // 0..100
 
 uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
-const char * version = "MCO 1 Mar 2026 Rev1";
+const char * version = "MCO 26 Mar 2026 Rev1";
+// len is an int in callback
 
 Preferences mcoPrefs;  // NVM structure
 // these will be initialized from the NV memory

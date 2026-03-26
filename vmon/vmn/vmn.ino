@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'vmn   Time-stamp: "2026-03-02 09:40:37 john"';
+// my $ver =  'vmn   Time-stamp: "2026-03-26 18:00:52 john"';
 
 // this is the app to run per battery vmon for the Ryobi mower.
 // called vmn as vmon was taken for the pcb
@@ -50,7 +50,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "VMON espnow 2 Mar 2026 Reva";
+const char * version = "VMON espnow 26 Mar 2026 Reva";
 
 Preferences vmonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -141,7 +141,7 @@ void OnDataSent(const wifi_tx_info_t *mac, esp_now_send_status_t status)
 
 
 // callback function that will be executed when data is received
-void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, uint8_t len) {
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, int len) {
   memcpy(&incoming_data.message, incomingData, sizeof(incoming_data));
   uint8_t *mac=esp_now_info->src_addr;
 

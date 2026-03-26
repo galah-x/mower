@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mcc  Time-stamp: "2026-03-02 10:02:42 john";
+// my $ver =  'mcc  Time-stamp: "2026-03-26 18:04:01 john";
 
 // this is the app to run the mower charger interface for the Ryobi mower.
 // use tools -> board ->  ESP32 Dev module 
@@ -46,7 +46,7 @@ void OnDataSent(const wifi_tx_info_t *tx_struct, esp_now_send_status_t status)
 struct_message response_data;
 
 // callback function that will be executed when data is received
-void OnDataRecv(const esp_now_recv_info_t * esp_now_info,  uint8_t *incomingData, uint8_t len) {
+void OnDataRecv(const esp_now_recv_info_t * esp_now_info,  uint8_t *incomingData, int len) {
   memcpy(&response_data, incomingData, sizeof(response_data));
   uint8_t *mac=esp_now_info->src_addr;
 

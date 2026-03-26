@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'psu  Time-stamp: "2026-03-02 09:31:33 john"';
+// my $ver =  'psu  Time-stamp: "2026-03-26 18:03:30 john"';
 
 // this is the app to run the espnow2serial (vichyctl) on the DPM8624 power supply the mcc talks to.
 // use tools -> board ->  ESP32 Dev module 
@@ -47,7 +47,7 @@ uint8_t baseMac[6];         // my own mac address
 const  uint16_t msgbuflen= 128;  // for wifi transfers
 char return_buf[msgbuflen]; // for responses
 
-const char * version = "PSU 2 Mar 2026 Rev1";
+const char * version = "PSU 26 Mar 2026 Rev1";
 
 Preferences psuPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -84,7 +84,7 @@ struct_message incoming_msg;
 int msglen;
 
 // callback function that will be executed when data is received
-void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, uint8_t len) {
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, int len) {
   memcpy(&incoming_msg, incomingData, sizeof(incoming_msg));
   uint8_t *mac=esp_now_info->src_addr;
 

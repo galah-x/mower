@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'imon   Time-stamp: "2026-03-02 10:27:17 john"';
+// my $ver =  'imon   Time-stamp: "2026-03-26 17:19:36 john"';
 
 // this is the app to run an isolated voltage shunt resistor current probe
 // use tools -> board ->  ESP32 Dev module 
@@ -53,7 +53,7 @@ uint8_t serial_buf_pointer;
 const  uint16_t msgbuflen= 128;  // for serial responses
 char return_buf[msgbuflen]; 
 
-const char * version = "IMON espnow 2 Mar 2026 Rev1";
+const char * version = "IMON espnow 26 Mar 2026 Rev1";
 
 Preferences imonPrefs;  // NVM structure
 // these will be initialized from the NV memory
@@ -118,7 +118,7 @@ void OnDataSent(const wifi_tx_info_t *tx_struct, esp_now_send_status_t status)
 }
 
 // callback function that will be executed when data is received
-void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, uint8_t len)
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, uint8_t *incomingData, int len)
 {
   //  uint8_t *mac=esp_now_info->src_addr;
   // Serial.printf("received %d bytes from %02x:%02x:%02x:%02x:%02x:%02x\n",

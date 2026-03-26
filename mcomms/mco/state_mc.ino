@@ -1,6 +1,6 @@
 //    -*- Mode: c++     -*-
 // emacs automagically updates the timestamp field on save
-// my $ver =  'mco state machine  Time-stamp: "2026-02-27 18:15:29 john"';
+// my $ver =  'mco state machine  Time-stamp: "2026-03-26 17:59:00 john"';
 
 // main functions for loop() in mco,  the state machine implementing the main runtime functionality
 
@@ -268,7 +268,14 @@ void update_vmon_state (void)
 
 void update_psu_state (void)
 {
-  if (! suspend_psu_polling)
+  if (!(suspend_psu_polling) && (State != Mowing))
+    // discovered that on the v3 espnow update, comms to vmons and imon breaks if the mcc and psu are unreachable.
+    // After a few seconds that is, they work for a bit.
+    // power cycling the imon allows ~~a dozen imon updates to get through.
+    // But its seems to be mco with the issue. very odd. 
+    // Don't know why this happens. not talking to mcc and psu may be a workaround.
+    // the symptom is SOC updates don't work when mowing
+    
     {
       sprintf(outgoing_data.message, ":01r%02d=0,\n", psu_addr[psu_ii]);
       psu_ii++;
@@ -283,43 +290,50 @@ void update_psu_state (void)
 
 void update_mcc_display (void)
 {
-  uint8_t i;
-  for (i=0; i< vmons; i++)    // battery voltages
-    { 
-      if ((rtc.getEpoch() - vmon[i].mostrecent) <= old_message_time)  
-	sprintf(outgoing_data.message, "WD%1d=%1d %2.3fV B%1d", i, i+1, vmon[i].volt, vmon[i].act_balance);
-      else
-	sprintf(outgoing_data.message, "WD%1d=%1d ??????????", i, i+1);
-      esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-    }
-  // d4 charger voltage
-  if ((rtc.getEpoch() - charger.mostrecent) <= old_message_time)  
-    sprintf(outgoing_data.message, "WD4=%2.3fV ", charger.voltage);
-  else
-    sprintf(outgoing_data.message, "WD4=??????V ");
-  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-  
-  //d5, battery current
-  if ((rtc.getEpoch() - imon.mostrecent) <= old_message_time)  
-    sprintf(outgoing_data.message, "WD5=I=%2.3fA ", imon.current);
-  else 
-    sprintf(outgoing_data.message, "WD5=C=%2.3fA ", charger.current);
-  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-  
-  //d6 SOC
-  if (battery_capacity > 0) 
+  // discovered that on the v3 espnow update, comms to vmons and imon breaks if the mcc and psu are unreachable.
+  // After a few seconds that is, they work for a bit.
+  // Don't know why this happens. not talking to mcc and psu may be a workaround.
+  // the symptom is SOC updates don't work when mowing
+  if (State != Mowing) {
     {
-      sprintf(outgoing_data.message, "WD6=SOC=%2d%%", (int16_t) ((100.0 * (float) soc)/(float) battery_capacity));
+      uint8_t i;
+      for (i=0; i< vmons; i++)    // battery voltages
+	{ 
+	  if ((rtc.getEpoch() - vmon[i].mostrecent) <= old_message_time)  
+	    sprintf(outgoing_data.message, "WD%1d=%1d %2.3fV B%1d", i, i+1, vmon[i].volt, vmon[i].act_balance);
+	  else
+	    sprintf(outgoing_data.message, "WD%1d=%1d ??????????", i, i+1);
+	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+	}
+      // d4 charger voltage
+      if ((rtc.getEpoch() - charger.mostrecent) <= old_message_time)  
+	sprintf(outgoing_data.message, "WD4=%2.3fV ", charger.voltage);
+      else
+	sprintf(outgoing_data.message, "WD4=??????V ");
+      esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+      
+      //d5, battery current
+      if ((rtc.getEpoch() - imon.mostrecent) <= old_message_time)  
+	sprintf(outgoing_data.message, "WD5=I=%2.3fA ", imon.current);
+      else 
+	sprintf(outgoing_data.message, "WD5=C=%2.3fA ", charger.current);
+      esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+      
+      //d6 SOC
+      if (battery_capacity > 0) 
+	{
+	  sprintf(outgoing_data.message, "WD6=SOC=%2d%%", (int16_t) ((100.0 * (float) soc)/(float) battery_capacity));
+	  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
+	}
+      
+      //D7 battery temp Vmon1
+      if ((rtc.getEpoch() - vmon[0].mostrecent) <= old_message_time)  
+	sprintf(outgoing_data.message, "WD7=S%1d %2dC", State, vmon[0].battemp);
+      else 
+	sprintf(outgoing_data.message, "WD7=S%1d?%2dC", State, vmon[0].battemp);
       esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
     }
-  
-  //D7 battery temp Vmon1
-  if ((rtc.getEpoch() - vmon[0].mostrecent) <= old_message_time)  
-    sprintf(outgoing_data.message, "WD7=S%1d %2dC", State, vmon[0].battemp);
-  else 
-    sprintf(outgoing_data.message, "WD7=S%1d?%2dC", State, vmon[0].battemp);
-  esp_now_send(mcc_mac, (uint8_t *) &outgoing_data, sizeof(outgoing_data));
-}
+  }
 
 
   
